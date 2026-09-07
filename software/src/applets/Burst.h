@@ -87,8 +87,7 @@ public:
         // Handle a burst set in progress
         if (bursts_to_go > 0) {
             if (--burst_countdown <= 0) {
-                int modded_spacing = effective_spacing;
-                modded_spacing = constrain(modded_spacing, HEM_BURST_SPACING_MIN, HEM_BURST_SPACING_MAX);
+                int modded_spacing = constrain(effective_spacing, HEM_BURST_SPACING_MIN, HEM_BURST_SPACING_MAX);
                 int accel_span = burst_count + bursts_to_go - 1;
                 if (accel > 0) {
                     int amount_from_min = modded_spacing - HEM_BURST_SPACING_MIN;
@@ -109,8 +108,8 @@ public:
                 ClockOut(0);
                 zap_active = true;
                 burst_count++;
-                if (--bursts_to_go > 0) burst_countdown = modded_spacing * HEMISPHERE_CLOCK_TICKS;
-                else { GateOut(1, 0); burst_countdown = modded_spacing * HEMISPHERE_CLOCK_TICKS; }
+                if (--bursts_to_go <= 0) GateOut(1, 0);
+                burst_countdown = modded_spacing * HEMISPHERE_CLOCK_TICKS;
             }
         } else if (burst_countdown > 0) {
             --burst_countdown;
@@ -121,10 +120,9 @@ public:
         bool trigger = Clock(1);
         bool btrig = trigger && (random(100) >= prob);
         if (trigger) { zap_active = btrig; if (!btrig) skip_tick = OC::CORE::ticks; }
-        if ((passthru & 0x2) && Clock(1)) ClockOut(0);
+        if ((passthru & 0x2) && trigger) ClockOut(0);
 
         if (btrig) {
-            zap_active = true;
             ClockOut(0);
             GateOut(1, 1);
             bursts_to_go = number_mod - 1;
@@ -324,7 +322,7 @@ private:
 
     void DrawIndicator() {
         if (zap_active && burst_countdown > 0)
-            gfxIcon(1 + ((number_mod - 1) * 5) - 2, 56, ZAP_ICON);
+            gfxIcon(max(0, 1 + ((number_mod - 1) * 5) - 2), 56, ZAP_ICON);
         // Countdown markers: 3x3 with 1 px between markers.
         for (int i = 0; i < bursts_to_go; i++)
             gfxFrame(1 + (i * 5), 59, 3, 3);
