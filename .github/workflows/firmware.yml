@@ -38,7 +38,7 @@ jobs:
     - name: Build firmware
       working-directory: software/
       run: |
-        pio run
+        pio run -e T40
 
     - name: Copy artifact
       uses: actions/upload-artifact@v7
