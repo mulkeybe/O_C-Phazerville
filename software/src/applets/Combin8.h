@@ -21,8 +21,10 @@
 class Combin8 : public HemisphereApplet {
 public:
   enum Combin8Cursor {
+    CH1_OUT,
     CH1_AUX1,
     CH1_AUX2,
+    CH2_OUT,
     CH2_AUX1,
     CH2_AUX2,
 
@@ -41,16 +43,16 @@ public:
   void Controller() {
     ForEachChannel(ch) {
       int signal = In(ch) + sources[ch][0].In() + sources[ch][1].In();
-      // probably not necessary to constrain here, but doesn't hurt
+
+      if (clocked[ch]) {
+        if (Clock(ch)) StartADCLag(ch);
+        if (EndOfADCLag(ch)) held_cv[ch] = signal;
+        signal = held_cv[ch];
+      }
+
       CONSTRAIN(signal, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
-
-      // TODO: gate inputs for mutes? S&H?
-      // Mute:
-      //if (Gate(ch)) Out(ch, 0); else Out(ch, signal);
-      // S&H:
-      //if (Clock(ch)) StartADCLag(ch);
-      //if (EndOfADCLag(ch)) Out(ch, signal);
-
+      signal = HS::GetQuantEngine(io_offset + ch).Process(signal, 0, 0);
+      CONSTRAIN(signal, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
       Out(ch, signal);
     }
   }
@@ -69,7 +71,18 @@ public:
           IndexedInput(CH2_AUX2, sources[1][1])
         ))
       return;
+
     CursorToggle();
+  }
+
+  void AuxButton() {
+    if (IsOutput()) {
+      SetAux(false);
+      HS::QuantizerEdit(io_offset + Channel());
+      CancelEdit();
+      return;
+    }
+    CancelEdit();
   }
 
   void OnEncoderMove(int direction) {
@@ -79,7 +92,17 @@ public:
     }
     if (EditSelectedInputMap(direction)) return;
 
-    sources[cursor/2][cursor%2].ChangeSource(direction);
+    int ch = Channel();
+    if (IsOutput()) {
+      if (direction > 0) {
+        clocked[ch] = true;
+      } else if (direction < 0) {
+        clocked[ch] = false;
+      }
+      return;
+    }
+
+    sources[ch][cursor % 3 - 1].ChangeSource(direction);
   }
 
   uint64_t OnDataRequest() {
@@ -97,8 +120,8 @@ public:
 protected:
   void SetHelp() {
     //                    "-------" <-- Label size guide
-    help[HELP_DIGITAL1] = "";
-    help[HELP_DIGITAL2] = "";
+    help[HELP_DIGITAL1] = "HoldCV1";
+    help[HELP_DIGITAL2] = "HoldCV2";
     help[HELP_CV1]      = "CV Ch1";
     help[HELP_CV2]      = "CV Ch2";
     help[HELP_OUT1]     = "Out1";
@@ -111,34 +134,126 @@ protected:
 private:
   int cursor;
 
+  int Channel() const {
+    return cursor / 3;
+  }
+
+  bool IsOutput() const {
+    return cursor % 3 == 0;
+  }
+
   // two extra sources per channel
   CVInputMap sources[2][2];
-  // XXX: offset?
+
+  // Fixed CV input mode: normal continuous or clocked sample-and-hold.
+  bool clocked[2] = {false, false};
+  int held_cv[2] = {0, 0};
 
   void DrawInterface() {
     ForEachChannel(ch) {
-      int ypos = 13 + 26*ch;
-      gfxPrint(2, ypos, OutputLabel(ch));
-      gfxPrint("=");
 
+      int ypos = 13 + 26 * ch;
+
+      const int out_x = 2;
+      if (clocked[ch]) {
+        gfxPos(out_x, ypos);
+        gfxPrintIcon(CLOCK_ICON);
+      } else {
+        gfxPrint(out_x, ypos, OutputLabel(ch));
+      }
+
+      // Reserve the clock-icon area so the rest of the row never shifts.
+      gfxPos(10, ypos);
+      gfxPrint("=");
       gfxPrint(cvmap[ch + io_offset]);
 
+      // Tight, equal spacing between CV, AUX1, and AUX2.
+      gfxPos(gfxGetPrintPosX() - 2, ypos);
       gfxPrint(" +");
-      gfxStartCursor();
+      int aux1_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][0]);
-      gfxEndCursor(cursor == ch*2 + 0, false, sources[ch][0].InputName());
-
+      gfxPos(gfxGetPrintPosX() - 2, ypos);
       gfxPrint(" +");
-      gfxStartCursor();
+      int aux2_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][1]);
-      gfxEndCursor(cursor == ch*2 + 1, false, sources[ch][1].InputName());
 
-      // meters
+      int base_cursor = ch * 3;
+      int out_cursor = base_cursor;
+      int aux1_cursor = base_cursor + 1;
+      int aux2_cursor = base_cursor + 2;
+
+      // Blinking underscore cursor for the compact values.
+      if (!EditMode() && CursorBlink()) {
+        if (cursor == out_cursor) {
+          gfxRect(out_x, ypos + 9, 8, 1);
+        } else if (cursor == aux1_cursor) {
+          gfxRect(aux1_x, ypos + 9, 8, 1);
+        } else if (cursor == aux2_cursor) {
+          gfxRect(aux2_x, ypos + 9, 8, 1);
+        }
+      }
+
+      // Full-value popup. Position is independent of the compact field.
+      if (EditMode()) {
+        const char *popup = nullptr;
+        int popup_x = 0;
+
+        if (cursor == out_cursor) {
+          popup = clocked[ch] ? "CLK" : "NRM";
+          popup_x = 1;       // far left
+        } else if (cursor == aux1_cursor) {
+          popup = sources[ch][0].InputName();
+          popup_x = 31;      // center
+        } else if (cursor == aux2_cursor) {
+          popup = sources[ch][1].InputName();
+          popup_x = 62;      // far right, constrained below
+        }
+
+        if (popup) {
+          int text_w = strlen(popup) * 6;
+          int box_w = text_w + 4;
+
+          if (cursor == out_cursor) {
+            popup_x = 1;
+          } else if (cursor == aux1_cursor) {
+            popup_x -= box_w / 2;
+          } else {
+            popup_x -= box_w - 1;
+          }
+
+          popup_x = constrain(popup_x, 1, 63 - box_w);
+
+          gfxClear(popup_x - 1, ypos - 1, box_w + 2, 12);
+          gfxFrame(popup_x, ypos - 1, box_w, 11);
+          gfxPrint(popup_x + 2, ypos + 1, popup);
+          gfxInvert(popup_x, ypos - 1, box_w, 11);
+        }
+      }
+
       DrawMeter(In(ch), ypos + 11, 1);
       DrawMeter(sources[ch][0].In(), ypos + 13, 1);
       DrawMeter(sources[ch][1].In(), ypos + 15, 1);
-
       DrawMeter(ViewOut(ch), ypos + 17, 3);
+    }
+
+    if (cursor == CH1_OUT) {
+      SetLabel("A OUT");
+      SetAux(true);
+    } else if (cursor == CH1_AUX1) {
+      SetLabel("A AUX IN 1");
+      SetAux(false);
+    } else if (cursor == CH1_AUX2) {
+      SetLabel("A AUX IN 2");
+      SetAux(false);
+    } else if (cursor == CH2_OUT) {
+      SetLabel("B OUT");
+      SetAux(true);
+    } else if (cursor == CH2_AUX1) {
+      SetLabel("B AUX IN 1");
+      SetAux(false);
+    } else if (cursor == CH2_AUX2) {
+      SetLabel("B AUX IN 2");
+      SetAux(false);
     }
   }
 
