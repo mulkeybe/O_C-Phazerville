@@ -239,7 +239,7 @@ private:
       // Blinking underscore cursor for the compact values.
       if (!EditMode() && CursorBlink()) {
         if (cursor == out_cursor) {
-          gfxRect(10, ypos + 9, gfxGetPrintPosX() - 10, 1);
+          gfxRect(out_x, ypos + 9, gfxGetPrintPosX() - out_x, 1);
         } else if (cursor == aux1_cursor) {
           gfxRect(aux1_x, ypos + 9, 8, 1);
         } else if (cursor == aux2_cursor) {
@@ -253,7 +253,7 @@ private:
         int popup_x = 0;
 
         if (cursor == out_cursor) {
-          if (output_mode[ch] == MODE_NRM) { popup = "NRM"; } else if (output_mode[ch] == MODE_SUM) { popup = "SUM"; } else { popup = cvmap[ch + io_offset].InputName(); }
+          if (output_mode[ch] == MODE_NRM) { popup = "NRM"; } else if (output_mode[ch] == MODE_SUM) { popup = "SUM"; } else { popup = "IN"; }
           popup_x = 1;       // far left
         } else if (cursor == aux1_cursor) {
           popup = sources[ch][0].InputName();
