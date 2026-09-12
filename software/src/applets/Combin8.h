@@ -209,7 +209,7 @@ private:
         gfxPrint(out_x, ypos, OutputLabel(ch));
       }
 
-      // Reserve the clock-icon area so the rest of the row never shifts.
+      // Place the clock indicator according to the selected output mode.
       gfxPos(10, ypos);
       gfxPrint("=");
       int fixed_input_x = gfxGetPrintPosX();
@@ -239,7 +239,7 @@ private:
       // Blinking underscore cursor for the compact values.
       if (!EditMode() && CursorBlink()) {
         if (cursor == out_cursor) {
-          gfxRect(out_x, ypos + 9, gfxGetPrintPosX() - out_x, 1);
+          gfxRect(out_x, ypos + 9, fixed_input_x + 8 - out_x, 1);
         } else if (cursor == aux1_cursor) {
           gfxRect(aux1_x, ypos + 9, 8, 1);
         } else if (cursor == aux2_cursor) {
