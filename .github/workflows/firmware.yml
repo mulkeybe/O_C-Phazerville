@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'software/**'
+    workflow_dispatch:
 
 jobs:
   build:
