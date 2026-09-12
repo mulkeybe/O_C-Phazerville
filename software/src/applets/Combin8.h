@@ -42,12 +42,22 @@ public:
 
   void Controller() {
     ForEachChannel(ch) {
-      int signal = In(ch) + sources[ch][0].In() + sources[ch][1].In();
+      int main_cv = In(ch);
+      int aux1 = sources[ch][0].In();
+      int aux2 = sources[ch][1].In();
+      int signal;
 
-      if (clocked[ch]) {
+      if (output_mode[ch] == MODE_SUM) {
+        signal = main_cv + aux1 + aux2;
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = signal;
         signal = held_cv[ch];
+      } else if (output_mode[ch] == MODE_IN) {
+        if (Clock(ch)) StartADCLag(ch);
+        if (EndOfADCLag(ch)) held_cv[ch] = main_cv;
+        signal = held_cv[ch] + aux1 + aux2;
+      } else {
+        signal = main_cv + aux1 + aux2;
       }
 
       CONSTRAIN(signal, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
@@ -95,9 +105,13 @@ public:
     int ch = Channel();
     if (IsOutput()) {
       if (direction > 0) {
-        clocked[ch] = true;
+        output_mode[ch] = static_cast<OutputMode>(
+          (output_mode[ch] + 1) % 3
+        );
       } else if (direction < 0) {
-        clocked[ch] = false;
+        output_mode[ch] = static_cast<OutputMode>(
+          (output_mode[ch] + 2) % 3
+        );
       }
       return;
     }
@@ -106,20 +120,47 @@ public:
   }
 
   uint64_t OnDataRequest() {
-    return PackPackables(
-      sources[0][0], sources[0][1], sources[1][0], sources[1][1]
+    uint64_t data = PackPackables(
+      sources[0][0],
+      sources[0][1],
+      sources[1][0],
+      sources[1][1]
     );
+
+    uint64_t mode_data = 0;
+    Pack(mode_data, PackLocation {0, 2}, output_mode[0]);
+    Pack(mode_data, PackLocation {2, 2}, output_mode[1]);
+    SetData(0, mode_data);
+
+    return data;
   }
 
   void OnDataReceive(uint64_t data) {
     UnpackPackables(
-      data, sources[0][0], sources[0][1], sources[1][0], sources[1][1]
+      data,
+      sources[0][0],
+      sources[0][1],
+      sources[1][0],
+      sources[1][1]
     );
-  }
 
+    uint64_t mode_data = 0;
+    if (GetData(0, mode_data)) {
+      uint8_t mode0 = Unpack(mode_data, PackLocation {0, 2});
+      uint8_t mode1 = Unpack(mode_data, PackLocation {2, 2});
+
+      if (mode0 > MODE_IN) mode0 = MODE_NRM;
+      if (mode1 > MODE_IN) mode1 = MODE_NRM;
+
+      output_mode[0] = static_cast<OutputMode>(mode0);
+      output_mode[1] = static_cast<OutputMode>(mode1);
+    } else {
+      output_mode[0] = MODE_NRM;
+      output_mode[1] = MODE_NRM;
+    }
+  }
 protected:
   void SetHelp() {
-    //                    "-------"  // Label size guide
     help[HELP_DIGITAL1] = "HoldCV1";
     help[HELP_DIGITAL2] = "HoldCV2";
     help[HELP_CV1]      = "CV Ch1";
@@ -128,7 +169,6 @@ protected:
     help[HELP_OUT2]     = "Out2";
     help[HELP_EXTRA1] = "3 inputs per chan";
     help[HELP_EXTRA2] = "";
-    //                  "---------------------"  // Extra text size guide
   }
 
 private:
@@ -142,11 +182,16 @@ private:
     return cursor % 3 == 0;
   }
 
-  // two extra sources per channel
+  // Additional sources.
   CVInputMap sources[2][2];
 
-  // CV mode: continuous input or clocked sample-and-hold.
-  bool clocked[2] = {false, false};
+  enum OutputMode {
+    MODE_NRM,
+    MODE_SUM,
+    MODE_IN,
+  };
+
+  OutputMode output_mode[2] = {MODE_NRM, MODE_NRM};
   int held_cv[2] = {0, 0};
 
   void DrawInterface() {
@@ -155,24 +200,31 @@ private:
       int ypos = 13 + 26 * ch;
 
       const int out_x = 2;
-      if (clocked[ch]) {
+      if (output_mode[ch] == MODE_SUM) {
         gfxPos(out_x, ypos);
         gfxPrintIcon(CLOCK_ICON);
       } else {
         gfxPrint(out_x, ypos, OutputLabel(ch));
       }
 
-      // Reserve the clock-icon area so the rest of the row never shifts.
+      // Output mode.
       gfxPos(10, ypos);
       gfxPrint("=");
-      gfxPrint(cvmap[ch + io_offset]);
+      int fixed_input_x = gfxGetPrintPosX();
+      if (output_mode[ch] == MODE_IN) {
+        gfxPos(fixed_input_x, ypos);
+        gfxPrintIcon(CLOCK_ICON);
+      } else {
+        gfxPos(fixed_input_x, ypos);
+        gfxPrint(cvmap[ch + io_offset]);
+      }
 
-      // Tight, equal spacing between CV, AUX1, and AUX2.
-      gfxPos(gfxGetPrintPosX() - 2, ypos);
+      // Input spacing.
+      gfxPos(gfxGetPrintPosX() - 4, ypos);
       gfxPrint(" +");
       int aux1_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][0]);
-      gfxPos(gfxGetPrintPosX() - 2, ypos);
+      gfxPos(gfxGetPrintPosX() - 4, ypos);
       gfxPrint(" +");
       int aux2_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][1]);
@@ -182,10 +234,10 @@ private:
       int aux1_cursor = base_cursor + 1;
       int aux2_cursor = base_cursor + 2;
 
-      // Blinking underscore cursor for the compact values.
+      // Cursor.
       if (!EditMode() && CursorBlink()) {
         if (cursor == out_cursor) {
-          gfxRect(out_x, ypos + 9, 8, 1);
+          gfxRect(out_x, ypos + 9, fixed_input_x + 8 - out_x, 1);
         } else if (cursor == aux1_cursor) {
           gfxRect(aux1_x, ypos + 9, 8, 1);
         } else if (cursor == aux2_cursor) {
@@ -193,20 +245,20 @@ private:
         }
       }
 
-      // Full-value popup. Position is independent of the compact field.
+      // Edit popup.
       if (EditMode()) {
         const char *popup = nullptr;
         int popup_x = 0;
 
         if (cursor == out_cursor) {
-          popup = clocked[ch] ? "CLK" : "NRM";
-          popup_x = 1;       // far left
+          if (output_mode[ch] == MODE_NRM) { popup = "NRM"; } else if (output_mode[ch] == MODE_SUM) { popup = "SUM"; } else { popup = "IN"; }
+          popup_x = 1;
         } else if (cursor == aux1_cursor) {
           popup = sources[ch][0].InputName();
-          popup_x = 31;      // center
+          popup_x = 31;
         } else if (cursor == aux2_cursor) {
           popup = sources[ch][1].InputName();
-          popup_x = 62;      // far right, constrained below
+          popup_x = 62;
         }
 
         if (popup) {
@@ -258,9 +310,9 @@ private:
   }
 
   void DrawMeter(int cv, int ypos, int height = 1) {
-      // positive values extend bars from left side of screen to the right
-      // negative values go from right side to left
-      int max_length = 60;  // px
+
+
+      const int max_length = 60;
       int length = ProportionCV(abs(cv), max_length);
       if (cv < 0)
           gfxRect(max_length - length, ypos, length, height);
