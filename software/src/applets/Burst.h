@@ -27,6 +27,9 @@
 
 class Burst : public HemisphereApplet {
 public:
+    static constexpr int CV_STEPS = 0;
+    static constexpr int CV_SPACING = 1;
+
     enum BurstCursor {
       CLKPASSTHRU, PROB,
       NUMBER, SPACING, ACCEL, JITTER, DIVISION,
@@ -59,11 +62,11 @@ public:
     void Controller() {
         if (CLKPASSTHRU == cursor && passthru && OC::CORE::ticks - passthru_popup_tick >= HEMISPHERE_CURSOR_TICKS * 4) enc_edit[hemisphere].isEditing = false;
         // Settings and modulation over CV
-        number_mod = constrain(number + SemitoneIn(0) / 5, 1, HEM_BURST_NUMBER_MAX);
+        number_mod = constrain(number + SemitoneIn(CV_STEPS) / 5, 1, HEM_BURST_NUMBER_MAX);
         if (clocked) {
             int div_index = (div < 0) ? div + 8 : div + 6;
             int div_mod = div_index * 2;
-            Modulate(div_mod, 1, 0, 28);
+            Modulate(div_mod, CV_SPACING, 0, 28);
             int mod_index = div_mod / 2;
             effective_div = (mod_index < 7) ? mod_index - 8 : mod_index - 6;
         }
@@ -81,7 +84,7 @@ public:
         // Get spacing with clock division or multiplication calculated
         int effective_spacing = get_effective_spacing();
         if (!clocked) {
-            Modulate(effective_spacing, 1, HEM_BURST_SPACING_MIN, HEM_BURST_SPACING_MAX);
+            Modulate(effective_spacing, CV_SPACING, HEM_BURST_SPACING_MIN, HEM_BURST_SPACING_MAX);
             display_spacing = effective_spacing;
         }
         // Handle a burst set in progress
