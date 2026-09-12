@@ -45,3 +45,5 @@ IncludeCategories:
   - Regex: "<[[:alnum:]._-]+>"
     Priority: 3
     SortPriority: 3
+
+# GitHub Actions build trigger
