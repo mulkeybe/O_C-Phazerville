@@ -119,7 +119,7 @@ public:
 
 protected:
   void SetHelp() {
-    //                    "-------" <-- Label size guide
+    //                    "-------"  // Label size guide
     help[HELP_DIGITAL1] = "HoldCV1";
     help[HELP_DIGITAL2] = "HoldCV2";
     help[HELP_CV1]      = "CV Ch1";
@@ -128,7 +128,7 @@ protected:
     help[HELP_OUT2]     = "Out2";
     help[HELP_EXTRA1] = "3 inputs per chan";
     help[HELP_EXTRA2] = "";
-    //                  "---------------------" <-- Extra text size guide
+    //                  "---------------------"  // Extra text size guide
   }
 
 private:
@@ -258,9 +258,9 @@ private:
   }
 
   void DrawMeter(int cv, int ypos, int height = 1) {
-      // positve values extend bars from left side of screen to the right
+      // positive values extend bars from left side of screen to the right
       // negative values go from right side to left
-      int max_length = 60;//px
+      int max_length = 60;  // px
       int length = ProportionCV(abs(cv), max_length);
       if (cv < 0)
           gfxRect(max_length - length, ypos, length, height);
