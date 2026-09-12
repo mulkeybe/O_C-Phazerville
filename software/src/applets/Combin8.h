@@ -42,12 +42,22 @@ public:
 
   void Controller() {
     ForEachChannel(ch) {
-      int signal = In(ch) + sources[ch][0].In() + sources[ch][1].In();
+      int main_cv = In(ch);
+      int aux1 = sources[ch][0].In();
+      int aux2 = sources[ch][1].In();
+      int signal;
 
-      if (clocked[ch]) {
+      if (output_mode[ch] == MODE_SUM) {
+        signal = main_cv + aux1 + aux2;
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = signal;
         signal = held_cv[ch];
+      } else if (output_mode[ch] == MODE_IN) {
+        if (Clock(ch)) StartADCLag(ch);
+        if (EndOfADCLag(ch)) held_cv[ch] = main_cv;
+        signal = held_cv[ch] + aux1 + aux2;
+      } else {
+        signal = main_cv + aux1 + aux2;
       }
 
       CONSTRAIN(signal, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
@@ -95,9 +105,13 @@ public:
     int ch = Channel();
     if (IsOutput()) {
       if (direction > 0) {
-        clocked[ch] = true;
+        output_mode[ch] = static_cast<OutputMode>(
+          (output_mode[ch] + 1) % 3
+        );
       } else if (direction < 0) {
-        clocked[ch] = false;
+        output_mode[ch] = static_cast<OutputMode>(
+          (output_mode[ch] + 2) % 3
+        );
       }
       return;
     }
@@ -106,17 +120,45 @@ public:
   }
 
   uint64_t OnDataRequest() {
-    return PackPackables(
-      sources[0][0], sources[0][1], sources[1][0], sources[1][1]
+    uint64_t data = PackPackables(
+      sources[0][0],
+      sources[0][1],
+      sources[1][0],
+      sources[1][1]
     );
+
+    uint64_t mode_data = 0;
+    Pack(mode_data, PackLocation {0, 2}, output_mode[0]);
+    Pack(mode_data, PackLocation {2, 2}, output_mode[1]);
+    SetData(0, mode_data);
+
+    return data;
   }
 
   void OnDataReceive(uint64_t data) {
     UnpackPackables(
-      data, sources[0][0], sources[0][1], sources[1][0], sources[1][1]
+      data,
+      sources[0][0],
+      sources[0][1],
+      sources[1][0],
+      sources[1][1]
     );
-  }
 
+    uint64_t mode_data = 0;
+    if (GetData(0, mode_data)) {
+      uint8_t mode0 = Unpack(mode_data, PackLocation {0, 2});
+      uint8_t mode1 = Unpack(mode_data, PackLocation {2, 2});
+
+      if (mode0 > MODE_IN) mode0 = MODE_NRM;
+      if (mode1 > MODE_IN) mode1 = MODE_NRM;
+
+      output_mode[0] = static_cast<OutputMode>(mode0);
+      output_mode[1] = static_cast<OutputMode>(mode1);
+    } else {
+      output_mode[0] = MODE_NRM;
+      output_mode[1] = MODE_NRM;
+    }
+  }
 protected:
   void SetHelp() {
     //                    "-------" <-- Label size guide
@@ -145,8 +187,13 @@ private:
   // two extra sources per channel
   CVInputMap sources[2][2];
 
-  // Fixed CV input mode: normal continuous or clocked sample-and-hold.
-  bool clocked[2] = {false, false};
+  enum OutputMode {
+    MODE_NRM,
+    MODE_SUM,
+    MODE_IN,
+  };
+
+  OutputMode output_mode[2] = {MODE_NRM, MODE_NRM};
   int held_cv[2] = {0, 0};
 
   void DrawInterface() {
@@ -155,7 +202,7 @@ private:
       int ypos = 13 + 26 * ch;
 
       const int out_x = 2;
-      if (clocked[ch]) {
+      if (output_mode[ch] == MODE_SUM) {
         gfxPos(out_x, ypos);
         gfxPrintIcon(CLOCK_ICON);
       } else {
@@ -165,14 +212,21 @@ private:
       // Reserve the clock-icon area so the rest of the row never shifts.
       gfxPos(10, ypos);
       gfxPrint("=");
-      gfxPrint(cvmap[ch + io_offset]);
+      int fixed_input_x = gfxGetPrintPosX();
+      if (output_mode[ch] == MODE_IN) {
+        gfxPos(fixed_input_x, ypos);
+        gfxPrintIcon(CLOCK_ICON);
+      } else {
+        gfxPos(fixed_input_x, ypos);
+        gfxPrint(cvmap[ch + io_offset]);
+      }
 
-      // Tight, equal spacing between CV, AUX1, and AUX2.
-      gfxPos(gfxGetPrintPosX() - 2, ypos);
+      // Compact spacing keeps room for the clock icon in the fixed-input slot.
+      gfxPos(gfxGetPrintPosX() - 4, ypos);
       gfxPrint(" +");
       int aux1_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][0]);
-      gfxPos(gfxGetPrintPosX() - 2, ypos);
+      gfxPos(gfxGetPrintPosX() - 4, ypos);
       gfxPrint(" +");
       int aux2_x = gfxGetPrintPosX();
       gfxPrint(sources[ch][1]);
@@ -185,7 +239,7 @@ private:
       // Blinking underscore cursor for the compact values.
       if (!EditMode() && CursorBlink()) {
         if (cursor == out_cursor) {
-          gfxRect(out_x, ypos + 9, 8, 1);
+          gfxRect(10, ypos + 9, gfxGetPrintPosX() - 10, 1);
         } else if (cursor == aux1_cursor) {
           gfxRect(aux1_x, ypos + 9, 8, 1);
         } else if (cursor == aux2_cursor) {
@@ -199,7 +253,7 @@ private:
         int popup_x = 0;
 
         if (cursor == out_cursor) {
-          popup = clocked[ch] ? "CLK" : "NRM";
+          if (output_mode[ch] == MODE_NRM) { popup = "NRM"; } else if (output_mode[ch] == MODE_SUM) { popup = "SUM"; } else { popup = cvmap[ch + io_offset].InputName(); }
           popup_x = 1;       // far left
         } else if (cursor == aux1_cursor) {
           popup = sources[ch][0].InputName();
