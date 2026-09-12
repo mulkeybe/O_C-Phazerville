@@ -213,10 +213,11 @@ private:
       gfxPos(10, ypos);
       gfxPrint("=");
       int fixed_input_x = gfxGetPrintPosX();
-      gfxPos(fixed_input_x, ypos);
       if (output_mode[ch] == MODE_IN) {
+        gfxPos(fixed_input_x, ypos);
         gfxPrintIcon(CLOCK_ICON);
       } else {
+        gfxPos(fixed_input_x, ypos);
         gfxPrint(cvmap[ch + io_offset]);
       }
 
