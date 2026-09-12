@@ -145,7 +145,7 @@ private:
   // two extra sources per channel
   CVInputMap sources[2][2];
 
-  // Fixed CV input mode: normal continuous or clocked sample-and-hold.
+  // CV mode: continuous input or clocked sample-and-hold.
   bool clocked[2] = {false, false};
   int held_cv[2] = {0, 0};
 
