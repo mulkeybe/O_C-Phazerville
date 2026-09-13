@@ -161,7 +161,6 @@ public:
   }
 protected:
   void SetHelp() {
-    //                    "-------" <-- Label size guide
     help[HELP_DIGITAL1] = "HoldCV1";
     help[HELP_DIGITAL2] = "HoldCV2";
     help[HELP_CV1]      = "CV Ch1";
@@ -170,7 +169,6 @@ protected:
     help[HELP_OUT2]     = "Out2";
     help[HELP_EXTRA1] = "3 inputs per chan";
     help[HELP_EXTRA2] = "";
-    //                  "---------------------" <-- Extra text size guide
   }
 
 private:
@@ -184,7 +182,7 @@ private:
     return cursor % 3 == 0;
   }
 
-  // two extra sources per channel
+  // Additional sources.
   CVInputMap sources[2][2];
 
   enum OutputMode {
@@ -209,7 +207,7 @@ private:
         gfxPrint(out_x, ypos, OutputLabel(ch));
       }
 
-      // Place the clock indicator according to the selected output mode.
+      // Output mode.
       gfxPos(10, ypos);
       gfxPrint("=");
       int fixed_input_x = gfxGetPrintPosX();
@@ -221,7 +219,7 @@ private:
         gfxPrint(cvmap[ch + io_offset]);
       }
 
-      // Compact spacing keeps room for the clock icon in the fixed-input slot.
+      // Input spacing.
       gfxPos(gfxGetPrintPosX() - 4, ypos);
       gfxPrint(" +");
       int aux1_x = gfxGetPrintPosX();
@@ -236,7 +234,7 @@ private:
       int aux1_cursor = base_cursor + 1;
       int aux2_cursor = base_cursor + 2;
 
-      // Blinking underscore cursor for the compact values.
+      // Cursor.
       if (!EditMode() && CursorBlink()) {
         if (cursor == out_cursor) {
           gfxRect(out_x, ypos + 9, fixed_input_x + 8 - out_x, 1);
@@ -247,20 +245,20 @@ private:
         }
       }
 
-      // Full-value popup. Position is independent of the compact field.
+      // Edit popup.
       if (EditMode()) {
         const char *popup = nullptr;
         int popup_x = 0;
 
         if (cursor == out_cursor) {
           if (output_mode[ch] == MODE_NRM) { popup = "NRM"; } else if (output_mode[ch] == MODE_SUM) { popup = "SUM"; } else { popup = "IN"; }
-          popup_x = 1;       // far left
+          popup_x = 1;
         } else if (cursor == aux1_cursor) {
           popup = sources[ch][0].InputName();
-          popup_x = 31;      // center
+          popup_x = 31;
         } else if (cursor == aux2_cursor) {
           popup = sources[ch][1].InputName();
-          popup_x = 62;      // far right, constrained below
+          popup_x = 62;
         }
 
         if (popup) {
@@ -312,9 +310,9 @@ private:
   }
 
   void DrawMeter(int cv, int ypos, int height = 1) {
-      // positve values extend bars from left side of screen to the right
-      // negative values go from right side to left
-      int max_length = 60;//px
+
+
+      const int max_length = 60;
       int length = ProportionCV(abs(cv), max_length);
       if (cv < 0)
           gfxRect(max_length - length, ypos, length, height);
