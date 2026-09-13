@@ -248,10 +248,11 @@ private:
         int y = 13;
 
         const uint8_t* icons[] = {CHECK_OFF_ICON, CHECK_ON_ICON, BURST_ICON, ZAP_ICON};
+        uint8_t display_passthru = constrain(passthru, 0, 2);
 
         // Clock passthrough
         gfxIcon(1, y, CLOCK_ICON);
-        gfxIcon(10, y, icons[passthru]);
+        gfxIcon(10, y, icons[display_passthru]);
 
         if (skip_tick && OC::CORE::ticks - skip_tick < HEMISPHERE_CURSOR_TICKS) gfxPrint(33, y, "*");
         gfxPrint(40, y, prob);
@@ -324,7 +325,8 @@ private:
         if (zap_active && burst_countdown > 0)
             gfxIcon(max(0, 1 + ((number_mod - 1) * 5) - 2), 56, ZAP_ICON);
         // Countdown markers: 3x3 with 1 px between markers.
-        for (int i = 0; i < bursts_to_go; i++)
+        int display_bursts = constrain(bursts_to_go, 0, HEM_BURST_NUMBER_MAX);
+        for (int i = 0; i < display_bursts; i++)
             gfxFrame(1 + (i * 5), 59, 3, 3);
     }
 
