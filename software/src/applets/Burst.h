@@ -63,7 +63,9 @@ public:
         if (clocked) {
             static const int div_states[] = {-8, -7, -6, -5, -4, -3, -2, 1, 2, 3, 4, 5, 6, 7, 8};
             int base_pos = 0;
-            for (int i = 0; i < 15; ++i) if (div_states[i] == div) base_pos = i;
+            for (int i = 0; i < 15; ++i) {
+                if (div_states[i] == div) base_pos = i;
+            }
             int cv_steps = Proportion(DetentedIn(1), HEMISPHERE_MAX_INPUT_CV, 7);
             int effective_pos = constrain(base_pos + cv_steps, 0, 14);
             effective_div = div_states[effective_pos];
