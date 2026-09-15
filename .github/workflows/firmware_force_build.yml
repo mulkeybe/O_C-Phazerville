@@ -1,0 +1,45 @@
+name: Force T40 Firmware Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: Setup env
+      run: |
+        echo "OC_ARTIFACT_TAG=manual-${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)" | tr '/' '_' >> $GITHUB_ENV
+
+    - name: Cache PlatformIO
+      uses: actions/cache@v5
+      with:
+        path: ~/.platformio
+        key: ${{ runner.os }}-${{ hashFiles('**/lockfiles') }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.x'
+        cache: 'pip'
+        cache-dependency-path: '**/requirements.txt'
+
+    - run: |
+        pip3 install --upgrade pip
+        pip3 install -r .github/workflows/requirements.txt
+
+    - name: Build firmware
+      working-directory: software/
+      run: |
+        pio run -e T40
+
+    - name: Copy T40 artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: o_C-T40-${{env.OC_ARTIFACT_TAG}}
+        path: software/.pio/build/T40/*.hex
