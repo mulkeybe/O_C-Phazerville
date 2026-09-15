@@ -36,13 +36,10 @@ jobs:
     - name: Build firmware
       working-directory: software/
       run: |
-        pio run
+        pio run -e T40
 
-    - name: Copy artifact
+    - name: Copy T40 artifact
       uses: actions/upload-artifact@v7
       with:
-        name: o_C-${{env.OC_ARTIFACT_TAG}}
-        include-hidden-files: true
-        path: |
-          software/*.hex
-          software/.pio/build/*/*.hex
+        name: o_C-T40-${{env.OC_ARTIFACT_TAG}}
+        path: software/.pio/build/T40/*.hex
