@@ -1,4 +1,4 @@
-name: Force Firmware Build
+name: Force T40 Firmware Build
 
 on:
   workflow_dispatch:
