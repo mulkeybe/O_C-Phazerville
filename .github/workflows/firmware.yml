@@ -1,7 +1,9 @@
 name: PlatformIO CI
 
 on:
-  push:
+    push:
+      branches-ignore:
+        - workbench
     paths:
       - 'software/**'
 
