@@ -1,4 +1,4 @@
-name: Custom Build
+name: Custom Mutable Build
 
 on:
   discussion_comment:
