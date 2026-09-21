@@ -58,7 +58,6 @@ public:
 
     void Controller() {
         if (CLKPASSTHRU == cursor && passthru && OC::CORE::ticks - passthru_popup_tick >= HEMISPHERE_CURSOR_TICKS * 4) enc_edit[hemisphere].isEditing = false;
-        // Settings and modulation over CV
         number_mod = constrain(number + SemitoneIn(0) / 5, 1, HEM_BURST_NUMBER_MAX);
         if (clocked) {
             static const int div_states[] = {-8, -7, -6, -5, -4, -3, -2, 1, 2, 3, 4, 5, 6, 7, 8};
@@ -70,10 +69,8 @@ public:
             int effective_pos = constrain(base_pos + cv_steps, 0, 14);
             effective_div = div_states[effective_pos];
         }
-        // Get timing information
         if (Clock(0)) {
             if (clocked) {
-                // Get a tempo, if this is the second tick or later since the last clock
                 spacing = ClockCycleTicks(0) / number_mod / HEMISPHERE_CLOCK_TICKS;
             } else clocked = 1;
 
@@ -81,7 +78,6 @@ public:
               ClockOut(0);
         }
 
-        // Get spacing with clock division or multiplication calculated
         int effective_spacing = get_effective_spacing();
         if (!clocked) {
             Modulate(effective_spacing, 1, HEM_BURST_SPACING_MIN, HEM_BURST_SPACING_MAX);
@@ -161,6 +157,7 @@ public:
 
         switch (cursor) {
           case CLKPASSTHRU:
+            SetLabel(passthru == 1 ? "ClockPass" : passthru == 2 ? "BurstPass" : "Burst");
             break;
           case PROB:
             prob = constrain(prob + direction, 0, 100);
@@ -213,7 +210,6 @@ public:
 
 protected:
   void SetHelp() {
-    //                    "-------" <-- Label size guide
     help[HELP_DIGITAL1] = "Clock";
     help[HELP_DIGITAL2] = "Burst";
     help[HELP_CV1]      = "Steps";
@@ -222,7 +218,6 @@ protected:
     help[HELP_OUT2]     = "Gate";
     help[HELP_EXTRA1] = "";
     help[HELP_EXTRA2] = "";
-    //                  "---------------------" <-- Extra text size guide
   }
 
 private:
@@ -233,7 +228,6 @@ private:
     bool clocked; // True after the first clock; later clocks set spacing
     bool zap_active; // ZAP display state
 
-    // Settings
     int div; // Clock divide/multiply
     int effective_div; // CV2-modulated divide/multiply
     uint8_t number; // Bursts per trigger
@@ -260,12 +254,14 @@ private:
         if (skip_tick && OC::CORE::ticks - skip_tick < HEMISPHERE_CURSOR_TICKS) gfxPrint(33, y, "*");
         gfxPrint(40, y, prob);
         gfxPrint("%");
+        const int prob_w = gfxGetPrintPosX() - 40;
 
         y += 9;
 
         // Steps
         gfxPrint(1, y, number_mod);
         gfxPrint(18, y, "Steps");
+        const int number_w = gfxGetPrintPosX() - 1;
         if (number_mod != number) { gfxIcon(50, y, CV_ICON); gfxBitmap(59, y, 3, SUP_ONE); }
 
         y += 9;
@@ -273,6 +269,7 @@ private:
         // Spacing
         gfxPrint(1, y, clocked ? get_effective_spacing() : display_spacing);
         gfxPrint(28, y, "ms");
+        const int spacing_w = gfxGetPrintPosX() - 1;
         if (!clocked && display_spacing != spacing) { gfxIcon(43, y, CV_ICON); gfxBitmap(51, y, 3, SUB_TWO); }
 
         y += 9;
@@ -280,10 +277,12 @@ private:
         // Acceleration
         gfxIcon(1, y-1, GAUGE_ICON);
         gfxPrint(10, y, accel);
+        const int accel_w = gfxGetPrintPosX() - 1;
 
         // Jitter
         gfxIcon(32, y - 1, RANDOM_ICON);
         gfxPrint(40, y, jitter);
+        const int jitter_w = gfxGetPrintPosX() - 32;
 
         y += 9;
 
@@ -291,9 +290,9 @@ private:
         if (clocked) {
             bool multiplying = effective_div < 0;
             gfxBitmap(1, y, 8, CLOCK_ICON);
-            gfxPrint(6, y, multiplying ? "x" : "/");
+            gfxPrint(10, y, multiplying ? "x" : "/");
             gfxPrint(multiplying ? -effective_div : effective_div);
-            gfxPrint(multiplying ? " Mult" : " Div");
+            gfxPrint(multiplying ? " Mlt" : " Div");
             if (effective_div != div) { gfxIcon(49, y, CV_ICON); gfxBitmap(57, y, 3, SUB_TWO); }
         }
 
@@ -301,25 +300,25 @@ private:
         switch (cursor) {
           case CLKPASSTHRU:
             gfxIcon(19, 13, LEFT_ICON);
-            gfxCursor(19, 22, 12, 9, passthru == 1 ? "ClockPass" : passthru == 2 ? "BurstPass" : "Burst");
+            SetLabel(passthru == 1 ? "ClockPass" : passthru == 2 ? "BurstPass" : "Burst");
             break;
           case PROB:
-            gfxCursor(40, 21, 18, 9, "Skip %");
+            gfxCursor(40, 21, prob_w, 9, "Skip %");
             break;
           case NUMBER:
-            gfxCursor( 1, 30, 13, 9, "Count");
+            gfxCursor(1, 30, number_w, 9, "Count");
             break;
           case SPACING:
-            gfxCursor( 1, 39, 19, 9, "Spacing");
+            gfxCursor(1, 39, spacing_w, 9, "Spacing");
             break;
           case ACCEL:
-            gfxCursor(10, 48, 13, 9, "Accel");
+            gfxCursor(1, 48, accel_w, 9, "Accel");
             break;
           case JITTER:
-            gfxCursor(40, 48, 13, 9, "Jitter");
+            gfxCursor(32, 48, jitter_w, 9, "Jitter");
             break;
           case DIVISION:
-            gfxCursor(1, 57, 43, 9, "ClkDiv");
+            gfxCursor(1, 57, 47, 9, "ClkDiv");
             break;
         }
     }
@@ -342,7 +341,7 @@ private:
         return effective_spacing;
     }
 
-    void div_constrain(int &value, int dir = 1) { // special constrain procedure for div.
+    void div_constrain(int &value, int dir = 1) {
         if (value > HEM_BURST_CLOCKDIV_MAX) value = HEM_BURST_CLOCKDIV_MAX;
         if (value < -HEM_BURST_CLOCKDIV_MAX) value = -HEM_BURST_CLOCKDIV_MAX;
         if (value == 0) value = dir > 0 ? 1 : -2; // No such thing as 1/1 Multiple
