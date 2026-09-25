@@ -41,6 +41,7 @@ using namespace HS;
 #include "ClkToGate.h"
 #include "ClockSkip.h"
 #include "Combin8.h"
+#include "FrogSeq.h"
 #include "Compare.h"
 #include "CVSeq.h"
 #include "DivSeq.h"
@@ -153,6 +154,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
     , DeclareApplet<ClkToGate, 78, CAT_CLOCKING>
     , DeclareApplet<ClockSkip, 28, CAT_CLOCKING>
     , DeclareApplet<Combin8, 82, CAT_UTILITY>
+    , DeclareApplet<FrogSeq, 95, CAT_SEQUENCER>
     , DeclareApplet<Compare, 30, CAT_UTILITY>
     , DeclareApplet<Cumulus, 5, CAT_LOGIC>
     , DeclareApplet<CVRecV2, 24, CAT_SEQUENCER>
