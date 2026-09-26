@@ -94,7 +94,65 @@ private:
   static constexpr int FROG_Y[4] = {13, 28, 41, 53};
   int frog_lane = 0;
 
+  // --------------------------------------------------------------------------
+  // Traffic
+  // --------------------------------------------------------------------------
+
+  static constexpr int TRAFFIC_LANES = 3;
+  int sequence_length = 16;
+  static constexpr int TRAFFIC_OBJECTS = 3;
+  static constexpr int TRAFFIC_WIDTH = 10;
+  static constexpr int TRAFFIC_LEFT_BOUNDARY = -TRAFFIC_WIDTH;
+  static constexpr int TRAFFIC_RIGHT_BOUNDARY = 64;
+
+  enum TrafficRate {
+    TRAFFIC_DIV_4,
+    TRAFFIC_DIV_2,
+    TRAFFIC_X1,
+    TRAFFIC_X2,
+    TRAFFIC_X4
+  };
+
+  struct TrafficObject {
+    int x;
+    bool active;
+  };
+
+  TrafficObject traffic[TRAFFIC_LANES][TRAFFIC_OBJECTS];
+
+  bool lane_reverse[TRAFFIC_LANES] = {
+    false,
+    true,
+    false
+  };
+
+  TrafficRate lane_rate[TRAFFIC_LANES] = {
+    TRAFFIC_DIV_4,
+    TRAFFIC_X1,
+    TRAFFIC_X4
+  };
+
+  int lane_flow[TRAFFIC_LANES] = {
+    5,
+    5,
+    5
+  };
+
+  uint32_t traffic_last_clock_tick = 0;
+  uint32_t traffic_last_move_tick = 0;
+  uint32_t traffic_clock_ticks = 1;
+  bool traffic_clock_valid = false;
+  bool traffic_initialized = false;
+
   MiniSeq seq;
+
+  int GetFrogNote(int step) {
+    return seq.GetNote(step) - 4;
+  }
+
+  void SetFrogNote(int note, int step) {
+    seq.SetNote(note + 4, step);
+  }
 
   int current_note = 0;
   uint32_t click_tick = 0;
@@ -114,6 +172,113 @@ private:
 
       }
     }
+  }
+
+  void MoveTraffic(bool clocked) {
+
+    if (!clocked)
+
+      return;
+
+    for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+
+      int pixels = 1;
+
+      switch (lane_rate[lane]) {
+
+        case TRAFFIC_DIV_4: pixels = 1; break;
+        case TRAFFIC_DIV_2: pixels = 2; break;
+        case TRAFFIC_X1: pixels = 4; break;
+        case TRAFFIC_X2: pixels = 8; break;
+        case TRAFFIC_X4: pixels = 16; break;
+
+      }
+
+      for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+
+        if (!traffic[lane][i].active)
+
+          continue;
+
+        if (lane_reverse[lane]) {
+
+          traffic[lane][i].x -= pixels;
+
+          if (traffic[lane][i].x + TRAFFIC_WIDTH <= 0)
+
+            traffic[lane][i].active = false;
+
+        }
+
+        else {
+
+          traffic[lane][i].x += pixels;
+
+          if (traffic[lane][i].x >= TRAFFIC_RIGHT_BOUNDARY)
+
+            traffic[lane][i].active = false;
+
+        }
+
+      }
+
+      bool has_active = false;
+
+      for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+
+        if (traffic[lane][i].active) {
+
+          has_active = true;
+
+          break;
+
+        }
+
+      }
+
+      if (!has_active) {
+
+        traffic[lane][0].active = true;
+
+        traffic[lane][0].x = lane_reverse[lane]
+          ? TRAFFIC_RIGHT_BOUNDARY
+          : TRAFFIC_LEFT_BOUNDARY;
+
+      }
+
+    }
+
+  }
+
+  void ResetTraffic() {
+    for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+      for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+        traffic[lane][i].active = (i == 0);
+        traffic[lane][i].x = lane_reverse[lane] ? 64 : -TRAFFIC_WIDTH;
+      }
+    }
+  }
+
+  void DrawTrafficObject(int lane, int x) {
+
+    const int y = FROG_Y[lane + 1] + 3;
+
+    const int draw_x = max(x, 0);
+    const int draw_right = min(x + TRAFFIC_WIDTH, 64);
+    const int draw_width = draw_right - draw_x;
+
+    if (draw_width > 0)
+      gfxFrame(draw_x, y, draw_width, 5);
+
+    const int wheel1_x = x + 2;
+    const int wheel2_x = x + 8;
+
+    if (wheel1_x >= 0 && wheel1_x < 64)
+      gfxPixel(wheel1_x, y + 5);
+
+    if (wheel2_x >= 0 && wheel2_x < 64)
+      gfxPixel(wheel2_x, y + 5);
+
   }
 
   void DrawStepCounter() {
@@ -174,6 +339,14 @@ private:
 
     DrawFrog();
 
+    for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+      for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+        if (traffic[lane][i].active)
+          DrawTrafficObject(lane, traffic[lane][i].x);
+      }
+    }
+
+
     DrawCurrentNote();
     gfxIcon(56, 13, RANDOM_ICON);
 
@@ -184,28 +357,13 @@ DrawStepCounter();
 
     // Frogger-style playfield.
 
-    gfxFrame(14, 27, 10, 5);
-    gfxPixel(16, 32);
-    gfxPixel(22, 32);
-
-    gfxFrame(34, 28, 10, 5);
-    gfxPixel(36, 33);
-    gfxPixel(42, 33);
-
 
     for (int x = 0; x < 64; x += 8)
       gfxLine(x, 38, x + 3, 38);
 
-    gfxFrame(27, 40, 10, 5);
-    gfxPixel(29, 45);
-    gfxPixel(35, 45);
-
     for (int x = 0; x < 64; x += 8)
       gfxLine(x, 51, x + 3, 51);
 
-    gfxIcon(14, 53, NOTE_ICON);
-    gfxIcon(28, 53, BURST_ICON);
-    gfxIcon(42, 53, ZAP_ICON);
   }
 
   void DrawNoteSequencerStep(int step) {
@@ -216,7 +374,7 @@ DrawStepCounter();
     const int x = 1 + col * 8;
     const int y = 17 + row * 13;
 
-    const int note = seq.GetNote(step);
+    const int note = GetFrogNote(step);
     const int height = constrain((note + 32) / 8, 1, 8);
 
     if (!seq.muted(step)) {
@@ -240,13 +398,13 @@ DrawStepCounter();
       gfxFrame(x - 1, y - 1, 8, 11);
 
       if (EditMode())
-        gfxInvert(x, y, 6, 9);
+        gfxInvert(x - 1, y - 1, 8, 11);
     }
   }
 
   void DrawNoteValue() {
 
-    int notenum = seq.GetNote(cursor);
+    int notenum = GetFrogNote(cursor);
     notenum = MIDIQuantizer::NoteNumber(
       QuantizerLookup(0, notenum + 64)
     );
@@ -256,25 +414,36 @@ DrawStepCounter();
 
   void DrawCurrentNote() {
 
-    static const char * const note_names[12] = {
-      "C", "C#", "D", "D#", "E", "F",
-      "F#", "G", "G#", "A", "A#", "B"
-    };
-
     const int notenum = MIDIQuantizer::NoteNumber(
+
       QuantizerLookup(0, current_note + 64)
+
     );
 
-    gfxPrint(44, 13, note_names[notenum % 12]);
+    const int octave = (notenum / 12) - 2;
+
+    gfxBitmap(43, 13, 8, NOTE_NAMES + (notenum % 12) * 8);
+
+    if (octave > 0)
+      gfxBitmap(52, 10, 3, SUP_ONE);
+    else if (octave < 0)
+      gfxBitmap(52, 21, 3, SUB_TWO);
+
   }
 
   void DrawNoteSequencerPage() {
 
-    SetAux(cursor >= 0 && cursor < FROGSEQ_STEPS);
+    SetAux(cursor >= 0 && cursor < sequence_length);
 
-    for (int s = 0; s < FROGSEQ_STEPS; ++s)
+    for (int s = 0; s < sequence_length; ++s)
       DrawNoteSequencerStep(s);
 
+    if (cursor == sequence_length) {
+      SetLabel("Steps");
+      gfxFrame(0, 16, 64, 27);
+      if (EditMode())
+        gfxInvert(1, 17, 62, 25);
+    }
   }
   void DrawInterface() {
 
@@ -326,7 +495,7 @@ DrawStepCounter();
     seq.step = 0;
     seq.reset = true;
 
-    current_note = seq.GetNote(0);
+    current_note = GetFrogNote(0);
   }
 
   void AdvanceSequence() {
@@ -340,22 +509,22 @@ DrawStepCounter();
 
       ++seq.step;
 
-      if (seq.step >= FROGSEQ_STEPS)
+      if (seq.step >= sequence_length)
         seq.step = 0;
 
     }
 
     if (!seq.muted(seq.step))
-      current_note = seq.GetNote(seq.step);
+      current_note = GetFrogNote(seq.step);
   }
 
   void RandomizeSequence() {
 
     for (int s = 0; s < FROGSEQ_STEPS; ++s) {
 
-      const int note = random(64) - 32;
+      const int note = random(60) - 24;
 
-      seq.SetNote(note, s);
+      SetFrogNote(note, s);
 
       seq.SetAccent(s, false);
       seq.Unmute(s);
@@ -366,16 +535,16 @@ DrawStepCounter();
 
   void EditSequenceNote(int direction) {
 
-    seq.SetNote(
-      seq.GetNote(cursor) + direction,
+    SetFrogNote(
+      constrain(GetFrogNote(cursor) + direction, -24, 35),
       cursor
     );
 
     if (cursor == seq.step)
-      current_note = seq.GetNote();
+      current_note = GetFrogNote(seq.step);
 
     int notenum = MIDIQuantizer::NoteNumber(
-      QuantizerLookup(0, seq.GetNote(cursor) + 64)
+      QuantizerLookup(0, GetFrogNote(cursor) + 64)
     );
     SetLabel(midi_note_numbers[notenum]);
 
@@ -406,6 +575,7 @@ public:
 
     frog_x = 26;
     frog_y = FROG_Y[0];
+    ResetTraffic();
 
     page = MAIN_PAGE;
 
@@ -413,7 +583,7 @@ public:
 
     frog_horizontal = true;
 
-    current_note = seq.GetNote(0);
+    current_note = GetFrogNote(0);
 
     click_tick = 0;
     edit_ticker = 0;
@@ -427,14 +597,20 @@ public:
   // --------------------------------------------------------------------------
 
   void Controller() {
-
-    if (Clock(1)) {
-
-      ResetSequence();
-
+    if (!traffic_initialized) {
+      ResetTraffic();
+      traffic_initialized = true;
     }
 
-    if (Clock(0)) {
+
+    if (Clock(1)) {
+      ResetSequence();
+    }
+
+    const bool clocked = Clock(0);
+    MoveTraffic(clocked);
+    if (clocked) {
+
 
       AdvanceSequence();
 
@@ -504,11 +680,16 @@ return;
           return;
         }
 
-        MoveCursor(cursor, direction, FROGSEQ_STEPS - 1);
+        MoveCursor(cursor, direction, sequence_length);
         return;
       }
 
-      EditSequenceNote(direction);
+      if (cursor == sequence_length) {
+        sequence_length = constrain(sequence_length + direction, 1, FROGSEQ_STEPS);
+        cursor = sequence_length;
+      }
+      else
+        EditSequenceNote(direction);
     }
   }
 
@@ -550,10 +731,15 @@ return;
 
       if (EditMode()) {
 
-        int notenum = MIDIQuantizer::NoteNumber(
-          QuantizerLookup(0, seq.GetNote(cursor) + 64)
-        );
-        SetLabel(midi_note_numbers[notenum]);
+        if (cursor == sequence_length) {
+          SetLabel("Steps");
+        }
+        else {
+          int notenum = MIDIQuantizer::NoteNumber(
+            QuantizerLookup(0, GetFrogNote(cursor) + 64)
+          );
+          SetLabel(midi_note_numbers[notenum]);
+        }
 
       }
       else {
