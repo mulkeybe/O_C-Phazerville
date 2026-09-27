@@ -147,11 +147,11 @@ private:
   MiniSeq seq;
 
   int GetFrogNote(int step) {
-    return seq.GetNote(step) - 4;
+    return seq.GetNote(step);
   }
 
   void SetFrogNote(int note, int step) {
-    seq.SetNote(note + 4, step);
+    seq.SetNote(note, step);
   }
 
 
@@ -523,9 +523,7 @@ DrawStepCounter();
 
     for (int s = 0; s < FROGSEQ_STEPS; ++s) {
 
-      const int note = random(60) - 24;
-
-      SetFrogNote(note, s);
+      SetFrogNote(random(64) - 32, s);
 
       seq.SetAccent(s, false);
       seq.Unmute(s);
@@ -535,10 +533,7 @@ DrawStepCounter();
   }
 
   void EditSequenceNote(int direction) {
-    SetFrogNote(
-      constrain(GetFrogNote(cursor) + direction, -24, 35),
-      cursor
-    );
+    SetFrogNote(GetFrogNote(cursor) + direction, cursor);
 
     if (cursor == seq.step)
       current_note = GetFrogNote(seq.step);
