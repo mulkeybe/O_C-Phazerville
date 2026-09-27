@@ -36,7 +36,6 @@
 
 // SOFTWARE.
 
-#include "MiniSeq.h"
 
 static const uint8_t frog_bitmap[9][12] = {
   {0,1,0,0,1,1,1,1,0,0,1,0},
@@ -144,14 +143,48 @@ private:
   bool traffic_clock_valid = false;
   bool traffic_initialized = false;
 
-  MiniSeq seq;
+
+  int8_t sequence_notes[FROGSEQ_STEPS];
+  bool sequence_mutes[FROGSEQ_STEPS];
+  bool sequence_bursts[FROGSEQ_STEPS];
+
+  int step = 0;
+  bool reset = true;
 
   int GetFrogNote(int step) {
-    return seq.GetNote(step);
+    return sequence_notes[step];
   }
 
   void SetFrogNote(int note, int step) {
-    seq.SetNote(note, step);
+    sequence_notes[step] = constrain(note, -24, 35);
+  }
+
+  bool muted(int step) {
+    return sequence_mutes[step];
+  }
+
+  void Unmute(int step) {
+    sequence_mutes[step] = false;
+  }
+
+  void SetMute(int step, bool on) {
+    sequence_mutes[step] = on;
+  }
+
+  void ToggleMute(int step) {
+    sequence_mutes[step] = !sequence_mutes[step];
+  }
+
+  bool BurstEnabled(int step) {
+    return sequence_bursts[step];
+  }
+
+  void SetBurst(int step, bool on = true) {
+    sequence_bursts[step] = on;
+  }
+
+  void ToggleBurst(int step) {
+    sequence_bursts[step] = !sequence_bursts[step];
   }
 
 
@@ -290,10 +323,10 @@ private:
 
     for (int i = 0; i < FROGSEQ_STEPS; ++i) {
 
-      if (i == seq.step) {
+      if (i == step) {
         gfxRect(x0 + i * gap - 1, y - 2, 3, 5);
       }
-      else if (!seq.muted(i)) {
+      else if (!muted(i)) {
         gfxPixel(x0 + i * gap, y);
       }
 
@@ -367,20 +400,20 @@ DrawStepCounter();
 
   }
 
-  void DrawNoteSequencerStep(int step) {
+  void DrawNoteSequencerStep(int step_index) {
 
-    const int col = step & 7;
-    const int row = step >> 3;
+    const int col = step_index & 7;
+    const int row = step_index >> 3;
 
     const int x = 1 + col * 8;
     const int y = 17 + row * 13;
 
-    const int note = GetFrogNote(step);
+    const int note = GetFrogNote(step_index);
     const int height = constrain((note + 32) / 8, 1, 8);
 
-    if (!seq.muted(step)) {
+    if (!muted(step_index)) {
 
-      if (seq.accent(step))
+      if (BurstEnabled(step_index))
 
         gfxRect(x, y + 8 - height, 6, height);
 
@@ -390,11 +423,11 @@ DrawStepCounter();
 
     }
 
-    if (seq.step == step)
+    if (step == step_index)
 
       gfxIcon(x + 1, y - 5, DOWN_BTN_ICON);
 
-    if (cursor == step) {
+    if (cursor == step_index) {
 
       gfxFrame(x - 1, y - 1, 8, 11);
 
@@ -406,21 +439,18 @@ DrawStepCounter();
   void DrawNoteValue() {
 
     int notenum = GetFrogNote(cursor);
-    notenum = MIDIQuantizer::NoteNumber(
-      QuantizerLookup(0, notenum + 64)
-    );
+    notenum = notenum + 36;
 
     gfxPrint(27, 13, midi_note_numbers[notenum]);
   }
 
   void DrawCurrentNote() {
-    const int notenum = MIDIQuantizer::NoteNumber(
-      QuantizerLookup(0, current_note + 64)
-    );
+    const int semitone = (current_note % 12 + 12) % 12;
+    const int notenum = current_note + 36;
 
     const int octave = (notenum / 12) - 3;
 
-    gfxBitmap(43, 13, 8, NOTE_NAMES + (notenum % 12) * 8);
+    gfxBitmap(43, 13, 8, NOTE_NAMES + semitone * 8);
 
     if (octave == -2)
       gfxBitmap(52, 16, 3, SUB_TWO);   // C1-B1
@@ -493,40 +523,40 @@ DrawStepCounter();
 
   void ResetSequence() {
 
-    seq.step = 0;
-    seq.reset = true;
+    step = 0;
+    reset = true;
 
     current_note = GetFrogNote(0);
   }
 
   void AdvanceSequence() {
 
-    if (seq.reset) {
+    if (reset) {
 
-      seq.reset = false;
+      reset = false;
 
     }
     else {
 
-      ++seq.step;
+      ++step;
 
-      if (seq.step >= sequence_length)
-        seq.step = 0;
+      if (step >= sequence_length)
+        step = 0;
 
     }
 
-    if (!seq.muted(seq.step))
-      current_note = GetFrogNote(seq.step);
+    if (!muted(step))
+      current_note = GetFrogNote(step);
   }
 
   void RandomizeSequence() {
 
     for (int s = 0; s < FROGSEQ_STEPS; ++s) {
 
-      SetFrogNote(random(64) - 32, s);
+      SetFrogNote(random(-24, 36), s);
 
-      seq.SetAccent(s, false);
-      seq.Unmute(s);
+      SetBurst(s, false);
+      SetMute(s, random(2));
     }
 
     ResetSequence();
@@ -535,12 +565,10 @@ DrawStepCounter();
   void EditSequenceNote(int direction) {
     SetFrogNote(GetFrogNote(cursor) + direction, cursor);
 
-    if (cursor == seq.step)
-      current_note = GetFrogNote(seq.step);
+    if (cursor == step)
+      current_note = GetFrogNote(step);
 
-    int notenum = MIDIQuantizer::NoteNumber(
-      QuantizerLookup(0, GetFrogNote(cursor) + 64)
-    );
+    int notenum = GetFrogNote(cursor) + 36;
 
     SetLabel(midi_note_numbers[notenum]);
 
@@ -548,16 +576,16 @@ DrawStepCounter();
     edit_ticker = 5000;
   }
 
-  void ToggleSequenceAccent() {
+  void ToggleSequenceBurst() {
 
-    seq.ToggleAccent(cursor);
+    ToggleBurst(cursor);
 
     edit_ticker = 5000;
   }
 
   void ToggleSequenceMute() {
 
-    seq.ToggleMute(cursor);
+    ToggleMute(cursor);
 
     edit_ticker = 5000;
   }
@@ -580,13 +608,19 @@ public:
 
     frog_horizontal = true;
 
+    for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+      sequence_notes[s] = 0;
+      sequence_mutes[s] = false;
+      sequence_bursts[s] = false;
+    }
+
     current_note = GetFrogNote(0);
 
     click_tick = 0;
     edit_ticker = 0;
 
-    seq.step = 0;
-    seq.reset = true;
+    step = 0;
+    reset = true;
   }
 
   // --------------------------------------------------------------------------
@@ -611,7 +645,7 @@ public:
 
       AdvanceSequence();
 
-      if (seq.muted(seq.step)) {
+      if (muted(step)) {
 
         GateOut(1, false);
 
@@ -624,7 +658,7 @@ public:
           127
         );
 
-        const int play_cv = QuantizerLookup(0, play_note);
+        const int play_cv = MIDIQuantizer::CV(current_note + 36);
 
         Out(0, play_cv);
 
@@ -715,7 +749,7 @@ return;
 
         if (OC::CORE::ticks - click_tick < HEMISPHERE_DOUBLE_CLICK_TIME) {
 
-          ToggleSequenceAccent();
+          ToggleSequenceBurst();
           click_tick = 0;
           return;
 
@@ -732,9 +766,7 @@ return;
           SetLabel("Steps");
         }
         else {
-          int notenum = MIDIQuantizer::NoteNumber(
-            QuantizerLookup(0, GetFrogNote(cursor) + 64)
-          );
+          int notenum = GetFrogNote(cursor) + 36;
           SetLabel(midi_note_numbers[notenum]);
         }
 
@@ -760,7 +792,7 @@ return;
 
     if (page == NOTE_SEQ_PAGE) {
 
-      seq.ToggleMute(cursor);
+      ToggleMute(cursor);
       CancelEdit();
       return;
 
@@ -791,8 +823,8 @@ return;
 
     frog_y = 14;
 
-    seq.step = 0;
-    seq.reset = true;
+    step = 0;
+    reset = true;
   }
 
   // --------------------------------------------------------------------------
