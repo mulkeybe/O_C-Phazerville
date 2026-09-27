@@ -154,6 +154,7 @@ private:
     seq.SetNote(note + 4, step);
   }
 
+
   int current_note = 0;
   uint32_t click_tick = 0;
   int edit_ticker = 0;
@@ -413,22 +414,22 @@ DrawStepCounter();
   }
 
   void DrawCurrentNote() {
-
     const int notenum = MIDIQuantizer::NoteNumber(
-
       QuantizerLookup(0, current_note + 64)
-
     );
 
-    const int octave = (notenum / 12) - 2;
+    const int octave = (notenum / 12) - 3;
 
     gfxBitmap(43, 13, 8, NOTE_NAMES + (notenum % 12) * 8);
 
-    if (octave > 0)
-      gfxBitmap(52, 10, 3, SUP_ONE);
-    else if (octave < 0)
-      gfxBitmap(52, 21, 3, SUB_TWO);
-
+    if (octave == -2)
+      gfxBitmap(52, 16, 3, SUB_TWO);   // C1-B1
+    else if (octave == -1)
+      gfxBitmap(52, 19, 3, SUP_ONE);   // C2-B2
+    else if (octave == 1)
+      gfxBitmap(52, 11, 3, SUP_ONE);   // C4-B4
+    else if (octave == 2)
+      gfxBitmap(52, 8, 3, SUB_TWO);    // C5-B5
   }
 
   void DrawNoteSequencerPage() {
@@ -534,7 +535,6 @@ DrawStepCounter();
   }
 
   void EditSequenceNote(int direction) {
-
     SetFrogNote(
       constrain(GetFrogNote(cursor) + direction, -24, 35),
       cursor
@@ -546,7 +546,9 @@ DrawStepCounter();
     int notenum = MIDIQuantizer::NoteNumber(
       QuantizerLookup(0, GetFrogNote(cursor) + 64)
     );
+
     SetLabel(midi_note_numbers[notenum]);
+
 
     edit_ticker = 5000;
   }
