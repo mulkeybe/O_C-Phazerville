@@ -70,6 +70,7 @@ public:
 
   enum MainCursor {
     FROG_SELECT,
+    SEMITONE_SELECT,
     RANDOM_SELECT,
     MAIN_CURSOR_LAST = RANDOM_SELECT
   };
@@ -83,6 +84,8 @@ private:
   Page page = MAIN_PAGE;
 
   int cursor = FROG_SELECT;
+  bool q_select = false;
+  int qselect = 0;
 
   int8_t frog_x = 26;
   int8_t frog_y = 14;
@@ -343,6 +346,17 @@ private:
       }
 
     }
+    else if (cursor == SEMITONE_SELECT) {
+
+      if (q_select) {
+        gfxSpicyCursor(42, 23, 12);
+        SetLabel("Q-engine");
+        SetAux(true);
+      } else {
+        gfxCursor(42, 23, 12);
+      }
+
+    }
     else if (cursor == RANDOM_SELECT) {
 
       gfxCursor(54, 23, 10);
@@ -352,7 +366,11 @@ private:
   }
 
   void DrawMainPage() {
-    SetLabel("");
+    if (q_select) {
+      SetLabel("Q-engine");
+    } else {
+      SetLabel("");
+    }
 
     if (cursor == FROG_SELECT && EditMode()) {
       if (frog_horizontal) {
@@ -366,6 +384,7 @@ private:
 
     SetAux(
       cursor == FROG_SELECT ||
+      q_select ||
       (page == NOTE_SEQ_PAGE &&
        cursor >= 0 &&
        cursor < FROGSEQ_STEPS)
@@ -445,21 +464,27 @@ DrawStepCounter();
   }
 
   void DrawCurrentNote() {
+    if (q_select) {
+      char q_label[] = { 'Q', char('1' + qselect), '\0' };
+      gfxPrint(42, 15, q_label);
+      return;
+    }
+
     const int semitone = (current_note % 12 + 12) % 12;
     const int notenum = current_note + 36;
 
     const int octave = (notenum / 12) - 3;
 
-    gfxBitmap(43, 13, 8, NOTE_NAMES + semitone * 8);
+    gfxBitmap(42, 13, 8, NOTE_NAMES + semitone * 8);
 
     if (octave == -2)
-      gfxBitmap(52, 16, 3, SUB_TWO);   // C1-B1
+      gfxBitmap(51, 16, 3, SUB_TWO);   // C1-B1
     else if (octave == -1)
-      gfxBitmap(52, 19, 3, SUP_ONE);   // C2-B2
+      gfxBitmap(51, 19, 3, SUP_ONE);   // C2-B2
     else if (octave == 1)
-      gfxBitmap(52, 11, 3, SUP_ONE);   // C4-B4
+      gfxBitmap(51, 11, 3, SUP_ONE);   // C4-B4
     else if (octave == 2)
-      gfxBitmap(52, 8, 3, SUB_TWO);    // C5-B5
+      gfxBitmap(51, 8, 3, SUB_TWO);    // C5-B5
   }
 
   void DrawNoteSequencerPage() {
@@ -685,6 +710,11 @@ public:
 
   FLASHMEM void OnEncoderMove(int direction) {
     if (page == MAIN_PAGE) {
+      if (q_select) {
+        qselect = constrain(qselect + direction, 0, 7);
+        return;
+      }
+
       if (EditMode()) {
         if (cursor == FROG_SELECT)
           MoveFrog(direction);
@@ -739,6 +769,13 @@ return;
 
       }
 
+      if (cursor == SEMITONE_SELECT) {
+
+        q_select = !q_select; CursorToggle();
+        return;
+
+      }
+
       CursorToggle();
       return;
     }
@@ -785,6 +822,11 @@ return;
 
   FLASHMEM void AuxButton() {
     if (page == MAIN_PAGE) {
+      if (q_select) {
+        HS::QuantizerEdit(qselect);
+        return;
+      }
+
       if (cursor == FROG_SELECT)
         ToggleFrogAxis();
 return;
