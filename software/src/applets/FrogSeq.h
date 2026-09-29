@@ -125,6 +125,9 @@ private:
   int sequence_length = 16;
   static constexpr int TRAFFIC_OBJECTS = 3;
   static constexpr int TRAFFIC_WIDTH = 10;
+  static constexpr int TRAFFIC_MOVE_PIXELS = 4;
+  static constexpr int TRAFFIC_MIN_SPAWN_GAP =
+    TRAFFIC_MOVE_PIXELS * 4;
   static constexpr int TRAFFIC_LEFT_BOUNDARY = -TRAFFIC_WIDTH;
   static constexpr int TRAFFIC_RIGHT_BOUNDARY = 64;
 
@@ -266,40 +269,72 @@ private:
       if (now - traffic_last_move_tick[lane] < move_ticks)
         continue;
 
-      traffic_last_move_tick[lane] += move_ticks;
+      traffic_last_move_tick[lane] = now;
 
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
         if (!traffic[lane][i].active)
           continue;
 
         if (lane_reverse[lane]) {
-          traffic[lane][i].x -= 4;
+          traffic[lane][i].x -= TRAFFIC_MOVE_PIXELS;
           if (traffic[lane][i].x + TRAFFIC_WIDTH <= 0)
             traffic[lane][i].active = false;
         }
         else {
-          traffic[lane][i].x += 4;
+          traffic[lane][i].x += TRAFFIC_MOVE_PIXELS;
           if (traffic[lane][i].x >= TRAFFIC_RIGHT_BOUNDARY)
             traffic[lane][i].active = false;
         }
       }
 
-      bool has_active = false;
+      const int spawn_x = lane_reverse[lane]
+        ? TRAFFIC_RIGHT_BOUNDARY
+        : TRAFFIC_LEFT_BOUNDARY;
+
+      bool spawn_clear = true;
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
-        if (traffic[lane][i].active) {
-          has_active = true;
-          break;
+        if (!traffic[lane][i].active)
+          continue;
+
+        const int car_left = traffic[lane][i].x;
+        const int car_right = traffic[lane][i].x + TRAFFIC_WIDTH;
+
+        if (lane_reverse[lane]) {
+          if (car_right > TRAFFIC_RIGHT_BOUNDARY - TRAFFIC_MIN_SPAWN_GAP) {
+            spawn_clear = false;
+            break;
+          }
+        }
+        else {
+          if (car_left < TRAFFIC_MIN_SPAWN_GAP) {
+            spawn_clear = false;
+            break;
+          }
         }
       }
+      if (spawn_clear &&
+          random(100) < FLOW_CHANCE[lane_flow[lane]]) {
 
-      if (!has_active) {
-        traffic[lane][0].active = true;
-        traffic[lane][0].x = lane_reverse[lane]
-          ? TRAFFIC_RIGHT_BOUNDARY
-          : TRAFFIC_LEFT_BOUNDARY;
+        for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+          if (!traffic[lane][i].active) {
+            traffic[lane][i].active = true;
+            traffic[lane][i].x = spawn_x;
+            break;
+          }
+        }
       }
     }
   }
+
+  static constexpr int FLOW_CHANCE[7] = {
+    0,
+    2,
+    5,
+    12,
+    25,
+    50,
+    100
+  };
 
   void ResetTraffic() {
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
@@ -829,7 +864,7 @@ return;
           lane_flow[lane] = constrain(
             lane_flow[lane] + direction,
             1,
-            5
+            6
           );
         }
       }
