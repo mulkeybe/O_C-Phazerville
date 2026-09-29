@@ -75,6 +75,27 @@ public:
     MAIN_CURSOR_LAST = RANDOM_SELECT
   };
 
+  enum NoteSeqCursor {
+    NOTE_STEP_FIRST = 0,
+    NOTE_STEP_LAST = FROGSEQ_STEPS - 1,
+
+    NOTE_STEPS = FROGSEQ_STEPS,
+
+    LANE1_DIRECTION,
+    LANE1_SPEED,
+    LANE1_FLOW,
+
+    LANE2_DIRECTION,
+    LANE2_SPEED,
+    LANE2_FLOW,
+
+    LANE3_DIRECTION,
+    LANE3_SPEED,
+    LANE3_FLOW,
+
+    NOTE_SEQ_CURSOR_LAST = LANE3_FLOW
+  };
+
 private:
 
   // --------------------------------------------------------------------------
@@ -441,7 +462,7 @@ DrawStepCounter();
     const int row = step_index >> 3;
 
     const int x = 1 + col * 8;
-    const int y = 17 + row * 12;
+    const int y = 16 + row * 12;
 
     const int note = GetFrogNote(step_index);
     const int height = constrain((note + 32) / 8, 1, 6);
@@ -465,6 +486,35 @@ DrawStepCounter();
     }
   }
 
+  void DrawLaneCursor(int lane, int y) {
+
+    const int direction_cursor = LANE1_DIRECTION + lane * 3;
+    const int speed_cursor = LANE1_SPEED + lane * 3;
+    const int flow_cursor = LANE1_FLOW + lane * 3;
+
+    if (cursor == direction_cursor) {
+      SetLabel(lane_reverse[lane] ? "Left" : "Right");
+      gfxLine(12, y + 8, 20, y + 8);
+
+      if (EditMode())
+        gfxInvert(12, y, 10, 8);
+    }
+    else if (cursor == speed_cursor) {
+      SetLabel("Speed");
+      gfxLine(24, y + 8, 43, y + 8);
+
+      if (EditMode())
+        gfxInvert(32, y, 15, 8);
+    }
+    else if (cursor == flow_cursor) {
+      SetLabel("Flow");
+      gfxLine(48, y + 8, 63, y + 8);
+
+      if (EditMode())
+        gfxInvert(57, y, 7, 8);
+    }
+  }
+
   void DrawNoteSequencerPage() {
   SetAux(cursor >= 0 && cursor < sequence_length);
 
@@ -476,7 +526,7 @@ DrawStepCounter();
   };
 
   static const int lane_y[TRAFFIC_LANES] = {
-    37, 46, 55
+    36, 45, 54
   };
 
   for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
@@ -496,11 +546,15 @@ DrawStepCounter();
   }
 
 
+  for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+    DrawLaneCursor(lane, lane_y[lane]);
+  }
+
   if (cursor == sequence_length) {
     SetLabel("Steps");
-    gfxFrame(0, 16, 64, 22);
+    gfxFrame(0, 15, 64, 22);
     if (EditMode())
-      gfxInvert(1, 17, 62, 20);
+      gfxInvert(1, 16, 62, 20);
   }
 }
 
@@ -738,16 +792,47 @@ return;
           return;
         }
 
-        MoveCursor(cursor, direction, sequence_length);
+        MoveCursor(cursor, direction, NOTE_SEQ_CURSOR_LAST);
         return;
       }
 
       if (cursor == sequence_length) {
-        sequence_length = constrain(sequence_length + direction, 1, FROGSEQ_STEPS);
+        sequence_length = constrain(
+          sequence_length + direction,
+          1,
+          FROGSEQ_STEPS
+        );
         cursor = sequence_length;
       }
-      else
+      else if (cursor < sequence_length) {
         EditSequenceNote(direction);
+      }
+      else if (cursor >= LANE1_DIRECTION &&
+               cursor <= LANE3_FLOW) {
+
+        const int lane = (cursor - LANE1_DIRECTION) / 3;
+        const int control = (cursor - LANE1_DIRECTION) % 3;
+
+        if (control == 0) {
+          lane_reverse[lane] = (direction < 0);
+        }
+        else if (control == 1) {
+          lane_rate[lane] = static_cast<TrafficRate>(
+            constrain(
+              static_cast<int>(lane_rate[lane]) + direction,
+              TRAFFIC_X4,
+              TRAFFIC_DIV_2
+            )
+          );
+        }
+        else if (control == 2) {
+          lane_flow[lane] = constrain(
+            lane_flow[lane] + direction,
+            1,
+            5
+          );
+        }
+      }
     }
   }
 
@@ -779,16 +864,12 @@ return;
 
     if (page == NOTE_SEQ_PAGE) {
 
-      if (cursor >= 0 && cursor < FROGSEQ_STEPS) {
-
+      if (cursor >= NOTE_STEP_FIRST && cursor <= NOTE_STEP_LAST) {
         if (OC::CORE::ticks - click_tick < HEMISPHERE_DOUBLE_CLICK_TIME) {
-
           ToggleSequenceBurst();
           click_tick = 0;
           return;
-
         }
-
         click_tick = OC::CORE::ticks;
       }
 
@@ -799,16 +880,28 @@ return;
         if (cursor == sequence_length) {
           SetLabel("Steps");
         }
-        else {
+        else if (cursor >= NOTE_STEP_FIRST &&
+                 cursor < sequence_length) {
           int notenum = GetFrogNote(cursor) + 36;
           SetLabel(midi_note_numbers[notenum]);
+        }
+        else if (cursor >= LANE1_DIRECTION &&
+                 cursor <= LANE3_FLOW) {
+
+          const int lane = (cursor - LANE1_DIRECTION) / 3;
+          const int control = (cursor - LANE1_DIRECTION) % 3;
+
+          if (control == 0)
+            SetLabel(lane_reverse[lane] ? "Left" : "Right");
+          else if (control == 1)
+            SetLabel("Speed");
+          else
+            SetLabel("Flow");
         }
 
       }
       else {
-
         SetLabel("");
-
       }
     }
   }
