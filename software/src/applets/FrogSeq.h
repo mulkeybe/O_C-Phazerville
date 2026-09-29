@@ -108,13 +108,12 @@ private:
   static constexpr int TRAFFIC_RIGHT_BOUNDARY = 64;
 
   enum TrafficRate {
-    TRAFFIC_DIV_4,
-    TRAFFIC_DIV_2,
-    TRAFFIC_X1,
+    TRAFFIC_X4,
+    TRAFFIC_X3,
     TRAFFIC_X2,
-    TRAFFIC_X4
+    TRAFFIC_X1,
+    TRAFFIC_DIV_2
   };
-
   struct TrafficObject {
     int x;
     bool active;
@@ -129,28 +128,24 @@ private:
   };
 
   TrafficRate lane_rate[TRAFFIC_LANES] = {
-    TRAFFIC_DIV_4,
+    TRAFFIC_X4,
     TRAFFIC_X1,
-    TRAFFIC_X4
-  };
-
-  int lane_flow[TRAFFIC_LANES] = {
+    TRAFFIC_DIV_2
+  };  int lane_flow[TRAFFIC_LANES] = {
     5,
     5,
     5
   };
 
   uint32_t traffic_last_clock_tick = 0;
-  uint32_t traffic_last_move_tick = 0;
+  uint32_t traffic_last_move_tick[TRAFFIC_LANES] = {0, 0, 0};
   uint32_t traffic_clock_ticks = 1;
   bool traffic_clock_valid = false;
   bool traffic_initialized = false;
 
-
   int8_t sequence_notes[FROGSEQ_STEPS];
   bool sequence_mutes[FROGSEQ_STEPS];
   bool sequence_bursts[FROGSEQ_STEPS];
-
   int step = 0;
   bool reset = true;
 
@@ -212,79 +207,77 @@ private:
   }
 
   void MoveTraffic(bool clocked) {
+    const uint32_t now = OC::CORE::ticks;
 
-    if (!clocked)
+    if (clocked) {
+      traffic_clock_ticks = max(1u, ClockCycleTicks(0));
+      traffic_clock_valid = true;
+      traffic_last_clock_tick = now;
+    }
 
+    if (!traffic_clock_valid)
       return;
 
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
-
-      int pixels = 1;
+      uint32_t move_ticks = traffic_clock_ticks;
 
       switch (lane_rate[lane]) {
-
-        case TRAFFIC_DIV_4: pixels = 1; break;
-        case TRAFFIC_DIV_2: pixels = 2; break;
-        case TRAFFIC_X1: pixels = 4; break;
-        case TRAFFIC_X2: pixels = 8; break;
-        case TRAFFIC_X4: pixels = 16; break;
-
+        case TRAFFIC_X4:
+          move_ticks = max(1u, traffic_clock_ticks / 4);
+          break;
+        case TRAFFIC_X3:
+          move_ticks = max(1u, traffic_clock_ticks / 3);
+          break;
+        case TRAFFIC_X2:
+          move_ticks = max(1u, traffic_clock_ticks / 2);
+          break;
+        case TRAFFIC_X1:
+          move_ticks = traffic_clock_ticks;
+          break;
+        case TRAFFIC_DIV_2:
+          move_ticks = traffic_clock_ticks * 2;
+          break;
       }
 
+      if (traffic_last_move_tick[lane] == 0)
+        traffic_last_move_tick[lane] = now - move_ticks;
+
+      if (now - traffic_last_move_tick[lane] < move_ticks)
+        continue;
+
+      traffic_last_move_tick[lane] += move_ticks;
+
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
-
         if (!traffic[lane][i].active)
-
           continue;
 
         if (lane_reverse[lane]) {
-
-          traffic[lane][i].x -= pixels;
-
+          traffic[lane][i].x -= 4;
           if (traffic[lane][i].x + TRAFFIC_WIDTH <= 0)
-
             traffic[lane][i].active = false;
-
         }
-
         else {
-
-          traffic[lane][i].x += pixels;
-
+          traffic[lane][i].x += 4;
           if (traffic[lane][i].x >= TRAFFIC_RIGHT_BOUNDARY)
-
             traffic[lane][i].active = false;
-
         }
-
       }
 
       bool has_active = false;
-
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
-
         if (traffic[lane][i].active) {
-
           has_active = true;
-
           break;
-
         }
-
       }
 
       if (!has_active) {
-
         traffic[lane][0].active = true;
-
         traffic[lane][0].x = lane_reverse[lane]
           ? TRAFFIC_RIGHT_BOUNDARY
           : TRAFFIC_LEFT_BOUNDARY;
-
       }
-
     }
-
   }
 
   void ResetTraffic() {
@@ -335,6 +328,30 @@ private:
 
     }
   }
+  void DrawCurrentNote() {
+    if (q_select) {
+      char q_label[] = { 'Q', char('1' + qselect), '\\0' };
+      gfxPrint(42, 15, q_label);
+      return;
+    }
+
+    const int semitone = (current_note % 12 + 12) % 12;
+    const int notenum = current_note + 36;
+
+    const int octave = (notenum / 12) - 3;
+
+    gfxBitmap(42, 13, 8, NOTE_NAMES + semitone * 8);
+
+    if (octave == -2)
+      gfxBitmap(51, 16, 3, SUB_TWO);   // C1-B1
+    else if (octave == -1)
+      gfxBitmap(51, 19, 3, SUP_ONE);   // C2-B2
+    else if (octave == 1)
+      gfxBitmap(51, 11, 3, SUP_ONE);   // C4-B4
+    else if (octave == 2)
+      gfxBitmap(51, 8, 3, SUB_TWO);    // C5-B5
+  }
+
   void DrawMainCursor() {
 
     if (cursor == FROG_SELECT) {
@@ -420,87 +437,73 @@ DrawStepCounter();
   }
 
   void DrawNoteSequencerStep(int step_index) {
-
     const int col = step_index & 7;
     const int row = step_index >> 3;
 
     const int x = 1 + col * 8;
-    const int y = 17 + row * 13;
+    const int y = 17 + row * 12;
 
     const int note = GetFrogNote(step_index);
-    const int height = constrain((note + 32) / 8, 1, 8);
+    const int height = constrain((note + 32) / 8, 1, 6);
 
     if (!muted(step_index)) {
-
       if (BurstEnabled(step_index))
-
-        gfxRect(x, y + 8 - height, 6, height);
-
+        gfxRect(x, y + 6 - height, 6, height);
       else
-
-        gfxFrame(x, y + 8 - height, 6, height);
-
+        gfxFrame(x, y + 6 - height, 6, height);
     }
 
+    // Active step indicator.
     if (step == step_index)
+      gfxIcon(x + 1, y - 8, DOWN_BTN_ICON);
 
-      gfxIcon(x + 1, y - 5, DOWN_BTN_ICON);
-
+    // Step cursor.
     if (cursor == step_index) {
-
-      gfxFrame(x - 1, y - 1, 8, 11);
-
+      gfxFrame(x - 1, y - 1, 8, 8);
       if (EditMode())
-        gfxInvert(x - 1, y - 1, 8, 11);
+        gfxInvert(x - 1, y - 1, 8, 8);
     }
-  }
-
-  void DrawNoteValue() {
-
-    int notenum = GetFrogNote(cursor);
-    notenum = notenum + 36;
-
-    gfxPrint(27, 13, midi_note_numbers[notenum]);
-  }
-
-  void DrawCurrentNote() {
-    if (q_select) {
-      char q_label[] = { 'Q', char('1' + qselect), '\0' };
-      gfxPrint(42, 15, q_label);
-      return;
-    }
-
-    const int semitone = (current_note % 12 + 12) % 12;
-    const int notenum = current_note + 36;
-
-    const int octave = (notenum / 12) - 3;
-
-    gfxBitmap(42, 13, 8, NOTE_NAMES + semitone * 8);
-
-    if (octave == -2)
-      gfxBitmap(51, 16, 3, SUB_TWO);   // C1-B1
-    else if (octave == -1)
-      gfxBitmap(51, 19, 3, SUP_ONE);   // C2-B2
-    else if (octave == 1)
-      gfxBitmap(51, 11, 3, SUP_ONE);   // C4-B4
-    else if (octave == 2)
-      gfxBitmap(51, 8, 3, SUB_TWO);    // C5-B5
   }
 
   void DrawNoteSequencerPage() {
+  SetAux(cursor >= 0 && cursor < sequence_length);
 
-    SetAux(cursor >= 0 && cursor < sequence_length);
+  for (int s = 0; s < sequence_length; ++s)
+    DrawNoteSequencerStep(s);
 
-    for (int s = 0; s < sequence_length; ++s)
-      DrawNoteSequencerStep(s);
+  static const char *speed_labels[] = {
+    "x4", "x3", "x2", "x1", "/2"
+  };
 
-    if (cursor == sequence_length) {
-      SetLabel("Steps");
-      gfxFrame(0, 16, 64, 27);
-      if (EditMode())
-        gfxInvert(1, 17, 62, 25);
-    }
+  static const int lane_y[TRAFFIC_LANES] = {
+    37, 46, 55
+  };
+
+  for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+    const int y = lane_y[lane];
+
+    char lane_label[] = { "L"[0], char("1"[0] + lane), "\0"[0] };
+    gfxPrint(0, y + 1, lane_label);
+
+    gfxIcon(13, y,
+            lane_reverse[lane] ? ROTATE_L_ICON : ROTATE_R_ICON);
+
+    gfxIcon(24, y, GAUGE_ICON);
+    gfxPrint(33, y + 1, speed_labels[lane_rate[lane]]);
+
+    gfxIcon(48, y, MOD_ICON);
+    gfxPrint(58, y + 1, lane_flow[lane]);
   }
+
+
+  if (cursor == sequence_length) {
+    SetLabel("Steps");
+    gfxFrame(0, 16, 64, 22);
+    if (EditMode())
+      gfxInvert(1, 17, 62, 20);
+  }
+}
+
   void DrawInterface() {
 
     if (page == MAIN_PAGE)
@@ -677,14 +680,8 @@ public:
       }
       else {
 
-        const int play_note = constrain(
-          current_note + 64,
-          0,
-          127
-        );
-
-        const int play_cv = MIDIQuantizer::CV(current_note + 36);
-
+        int play_cv = MIDIQuantizer::CV(current_note + 36);
+        play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
         Out(0, play_cv);
 
         ClockOut(1);
