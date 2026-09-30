@@ -123,6 +123,28 @@ private:
 
   static constexpr int TRAFFIC_LANES = 3;
   int sequence_length = 16;
+
+  // Saved sequence memory.
+  static constexpr int SAVED_SEQUENCES = 8;
+  static constexpr int FROGSEQ_DATA_START = 0;
+  static constexpr int FROGSEQ_DATA_SLOTS = SAVED_SEQUENCES * 2;
+
+
+  uint8_t current_sequence = 0;
+  bool sequence_menu = false;
+
+  enum SequenceMenuMode {
+    SEQUENCE_LOAD = 0,
+    SEQUENCE_MOVE,
+    SEQUENCE_RESET
+  };
+
+  uint8_t sequence_menu_mode = SEQUENCE_LOAD;
+bool sequence_reset_confirm = false;
+bool sequence_reset_yes = false;
+  bool sequence_slot_mode = false;
+  uint8_t selected_sequence = 0;
+
   static constexpr int TRAFFIC_OBJECTS = 3;
   static constexpr int TRAFFIC_WIDTH = 10;
   static constexpr int TRAFFIC_MOVE_PIXELS = 4;
@@ -132,11 +154,11 @@ private:
   static constexpr int TRAFFIC_RIGHT_BOUNDARY = 64;
 
   enum TrafficRate {
-    TRAFFIC_X4,
-    TRAFFIC_X3,
-    TRAFFIC_X2,
+    TRAFFIC_DIV_2,
     TRAFFIC_X1,
-    TRAFFIC_DIV_2
+    TRAFFIC_X2,
+    TRAFFIC_X3,
+    TRAFFIC_X4
   };
   struct TrafficObject {
     int x;
@@ -550,14 +572,36 @@ DrawStepCounter();
     }
   }
 
+  void DrawSequenceMenu() {
+
+    const int px = 5;
+    const int py = 13;
+    const int pw = 54;
+    const int ph = 38;
+
+    gfxRect(px, py, pw, ph);
+    gfxFrame(px, py, pw, ph);
+
+    gfxPrint(px + 5, py + 5, "Load");
+    gfxPrint(px + 5, py + 15, "Move");
+    gfxPrint(px + 5, py + 25, "Reset");
+
+    if (sequence_menu_mode == SEQUENCE_LOAD)
+      gfxIcon(px + 38, py + 5, LEFT_ICON);
+    else if (sequence_menu_mode == SEQUENCE_MOVE)
+      gfxIcon(px + 38, py + 15, LEFT_ICON);
+    else
+      gfxIcon(px + 38, py + 25, LEFT_ICON);
+  }
+
   void DrawNoteSequencerPage() {
-  SetAux(cursor >= 0 && cursor < sequence_length);
+  SetAux(cursor >= 0 && (cursor <= sequence_length || sequence_menu || sequence_slot_mode || sequence_reset_confirm));
 
   for (int s = 0; s < sequence_length; ++s)
     DrawNoteSequencerStep(s);
 
   static const char *speed_labels[] = {
-    "x4", "x3", "x2", "x1", "/2"
+    "/2", "x1", "x2", "x3", "x4"
   };
 
   static const int lane_y[TRAFFIC_LANES] = {
@@ -585,11 +629,47 @@ DrawStepCounter();
     DrawLaneCursor(lane, lane_y[lane]);
   }
 
-  if (cursor == sequence_length) {
+  if (sequence_menu) {
+
+    if (sequence_menu_mode == SEQUENCE_LOAD)
+      SetLabel("Load");
+    else if (sequence_menu_mode == SEQUENCE_MOVE)
+      SetLabel("Move");
+    else
+      SetLabel("Reset");
+
+  }
+  else if (sequence_slot_mode) {
+    static char label[12];
+
+    if (sequence_menu_mode == SEQUENCE_LOAD)
+      snprintf(label, sizeof(label),
+               "Load(%d)", selected_sequence + 1);
+    else
+      snprintf(label, sizeof(label),
+               "Move(%d)", selected_sequence + 1);
+
+    SetLabel(label);
+  }
+  else if (sequence_reset_confirm) {
+    SetLabel(sequence_reset_yes ? "Reset(Y)" : "Reset(N)");
+  }
+  else if (cursor == sequence_length) {
+
     SetLabel("Steps");
+
+
+
+  }
+
+  if (cursor == sequence_length) {
+
     gfxFrame(0, 15, 64, 22);
-    if (EditMode())
+
+    if (EditMode() || sequence_menu || sequence_slot_mode || sequence_reset_confirm)
+
       gfxInvert(1, 16, 62, 20);
+
   }
 }
 
@@ -819,6 +899,39 @@ return;
     }
 
     if (page == NOTE_SEQ_PAGE) {
+      if (sequence_reset_confirm) {
+
+        sequence_reset_yes = (direction > 0);
+        return;
+
+      }
+
+      if (sequence_menu) {
+
+        sequence_menu_mode = static_cast<SequenceMenuMode>(
+          constrain(
+            static_cast<int>(sequence_menu_mode) + direction,
+            SEQUENCE_LOAD,
+            SEQUENCE_RESET
+          )
+        );
+
+        return;
+
+      }
+
+      if (sequence_slot_mode) {
+
+        selected_sequence = constrain(
+          selected_sequence + direction,
+          0,
+          SAVED_SEQUENCES - 1
+        );
+
+        return;
+
+      }
+
       if (!EditMode()) {
         if (direction < 0 && cursor == 0) {
           page = MAIN_PAGE;
@@ -828,6 +941,12 @@ return;
         }
 
         MoveCursor(cursor, direction, NOTE_SEQ_CURSOR_LAST);
+
+        // Skip inactive step positions when sequence length is shortened.
+        if (cursor > sequence_length && cursor < LANE1_DIRECTION) {
+          cursor = direction > 0 ? LANE1_DIRECTION : sequence_length;
+        }
+
         return;
       }
 
@@ -855,8 +974,8 @@ return;
           lane_rate[lane] = static_cast<TrafficRate>(
             constrain(
               static_cast<int>(lane_rate[lane]) + direction,
-              TRAFFIC_X4,
-              TRAFFIC_DIV_2
+              TRAFFIC_DIV_2,
+              TRAFFIC_X4
             )
           );
         }
@@ -872,25 +991,23 @@ return;
   }
 
   // --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
   // Button
   // --------------------------------------------------------------------------
 
-  FLASHMEM void OnButtonPress() {
+  void OnButtonPress() override {
 
     if (page == MAIN_PAGE) {
 
       if (cursor == RANDOM_SELECT) {
-
         RandomizeSequence();
         return;
-
       }
 
       if (cursor == SEMITONE_SELECT) {
-
-        q_select = !q_select; CursorToggle();
+        q_select = !q_select;
+        CursorToggle();
         return;
-
       }
 
       CursorToggle();
@@ -898,6 +1015,61 @@ return;
     }
 
     if (page == NOTE_SEQ_PAGE) {
+
+      if (sequence_reset_confirm) {
+        if (sequence_reset_yes) {
+          for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+            sequence_notes[s] = 0;
+            sequence_mutes[s] = false;
+            sequence_bursts[s] = false;
+          }
+          sequence_length = FROGSEQ_STEPS;
+          step = 0;
+          reset = true;
+          current_note = GetFrogNote(0);
+          SaveSequenceMemory(current_sequence);
+        }
+
+        sequence_reset_confirm = false;
+        sequence_reset_yes = true;
+        sequence_menu_mode = SEQUENCE_LOAD;
+        selected_sequence = current_sequence;
+        CancelEdit();
+        cursor = sequence_length;
+        return;
+      }
+
+      if (sequence_menu) {
+        if (sequence_menu_mode == SEQUENCE_RESET) {
+          sequence_menu = false;
+          sequence_reset_confirm = true;
+          sequence_reset_yes = false;
+          return;
+        }
+
+        sequence_menu = false;
+        sequence_slot_mode = true;
+        selected_sequence = current_sequence;
+        return;
+      }
+
+      if (sequence_slot_mode) {
+        if (sequence_menu_mode == SEQUENCE_LOAD) {
+          if (LoadSequenceMemory(selected_sequence))
+            current_sequence = selected_sequence;
+        }
+        else if (sequence_menu_mode == SEQUENCE_MOVE) {
+          SaveSequenceMemory(selected_sequence);
+          current_sequence = selected_sequence;
+        }
+
+        sequence_slot_mode = false;
+        sequence_menu_mode = SEQUENCE_LOAD;
+        selected_sequence = current_sequence;
+        CancelEdit();
+        cursor = sequence_length;
+        return;
+      }
 
       if (cursor >= NOTE_STEP_FIRST && cursor <= NOTE_STEP_LAST) {
         if (OC::CORE::ticks - click_tick < HEMISPHERE_DOUBLE_CLICK_TIME) {
@@ -911,8 +1083,7 @@ return;
       CursorToggle();
 
       if (EditMode()) {
-
-        if (cursor == sequence_length) {
+        if (cursor == sequence_length && !sequence_menu) {
           SetLabel("Steps");
         }
         else if (cursor >= NOTE_STEP_FIRST &&
@@ -922,7 +1093,6 @@ return;
         }
         else if (cursor >= LANE1_DIRECTION &&
                  cursor <= LANE3_FLOW) {
-
           const int lane = (cursor - LANE1_DIRECTION) / 3;
           const int control = (cursor - LANE1_DIRECTION) % 3;
 
@@ -933,12 +1103,15 @@ return;
           else
             SetLabel("Flow");
         }
-
       }
       else {
         SetLabel("");
       }
+
+      return;
     }
+
+    CursorToggle();
   }
 
   // --------------------------------------------------------------------------
@@ -946,7 +1119,9 @@ return;
   // --------------------------------------------------------------------------
 
   FLASHMEM void AuxButton() {
+
     if (page == MAIN_PAGE) {
+
       if (q_select) {
         HS::QuantizerEdit(qselect);
         return;
@@ -954,16 +1129,57 @@ return;
 
       if (cursor == FROG_SELECT)
         ToggleFrogAxis();
-return;
+
+      return;
     }
 
     if (page == NOTE_SEQ_PAGE) {
 
+      // AUX on Step Amount opens/cancels the Load/Move/Reset menu.
+      if (cursor == sequence_length) {
+
+        if (sequence_menu || sequence_slot_mode || sequence_reset_confirm) {
+
+          sequence_menu = false;
+          sequence_slot_mode = false;
+          sequence_reset_confirm = false;
+          sequence_reset_yes = false;
+          sequence_menu_mode = SEQUENCE_LOAD;
+          selected_sequence = current_sequence;
+          SetLabel("Steps");
+
+        }
+        else {
+
+          sequence_menu = true;
+          sequence_menu_mode = SEQUENCE_LOAD;
+          selected_sequence = current_sequence;
+          SetLabel("Load");
+
+        }
+
+        return;
+      }
+
+      // AUX anywhere else cancels sequence memory selection.
+      if (sequence_menu || sequence_slot_mode || sequence_reset_confirm) {
+
+        sequence_menu = false;
+        sequence_slot_mode = false;
+        sequence_reset_confirm = false;
+        sequence_reset_yes = false;
+        sequence_menu_mode = SEQUENCE_LOAD;
+        selected_sequence = current_sequence;
+        SetLabel("Steps");
+        return;
+      }
+
       ToggleMute(cursor);
       CancelEdit();
       return;
+    }
 
-    }  }
+  }
 
   // --------------------------------------------------------------------------
   // Persistence
@@ -972,25 +1188,197 @@ return;
   uint64_t OnDataRequest() {
 
     uint64_t data = 0;
+for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
+      const int base = lane * 7;
+
+      // Lane direction: 1 bit.
+      Pack(
+        data,
+        PackLocation{base, 1},
+        (uint8_t)lane_reverse[lane]
+      );
+
+      // Lane speed: 3 bits.
+      Pack(
+        data,
+        PackLocation{base + 1, 3},
+        (uint8_t)lane_rate[lane]
+      );
+
+      // Lane flow: 3 bits.
+      Pack(
+        data,
+        PackLocation{base + 4, 3},
+        (uint8_t)constrain(lane_flow[lane], 1, 6)
+      );
+    }
+
+    // Current sequence number: 3 bits.
     Pack(
       data,
-      PackLocation{0, 6},
-      (uint8_t)constrain(frog_x, 0, 63)
+      PackLocation{21, 3},
+      current_sequence
     );
+
+
+    // Sequence length: 4 bits.
+    Pack(
+      data,
+      PackLocation{24, 4},
+      sequence_length - 1
+    );
+
+// Save the currently active sequence to RAM.
+    SaveSequenceMemory(current_sequence);
 
     return data;
   }
 
+  void SaveSequenceMemory(uint8_t sequence) {
+
+    uint64_t data = 0;
+
+    // Steps 1-8: 8 bits per step.
+    for (int s = 0; s < 8; ++s) {
+
+      const uint8_t note =
+        constrain(sequence_notes[s] + 24, 0, 59);
+
+      const uint8_t packed =
+        note
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
+
+      Pack(
+        data,
+        PackLocation{s * 8, 8},
+        packed
+      );
+    }
+
+    SetData(FROGSEQ_DATA_START + sequence * 2, data);
+
+    data = 0;
+
+    // Steps 9-16: 8 bits per step.
+    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
+
+      const int offset = (s - 8) * 8;
+
+      const uint8_t note =
+        constrain(sequence_notes[s] + 24, 0, 59);
+
+      const uint8_t packed =
+        note
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
+
+      Pack(
+        data,
+        PackLocation{offset, 8},
+        packed
+      );
+    }
+
+    SetData(FROGSEQ_DATA_START + sequence * 2 + 1, data);
+  }
+
+  bool LoadSequenceMemory(uint8_t sequence) {
+
+    uint64_t data = 0;
+
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2, data))
+      return false;
+
+    for (int s = 0; s < 8; ++s) {
+
+      const int offset = s * 8;
+
+      const uint8_t packed =
+        Unpack(data, PackLocation{offset, 8});
+
+      sequence_notes[s] =
+        constrain((packed & 0x3f) - 24, -24, 35);
+
+      sequence_mutes[s] =
+        (packed & 0x40) != 0;
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
+    }
+
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
+      return false;
+
+    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
+
+      const int offset = (s - 8) * 8;
+
+      const uint8_t packed =
+        Unpack(data, PackLocation{offset, 8});
+
+      sequence_notes[s] =
+        constrain((packed & 0x3f) - 24, -24, 35);
+
+      sequence_mutes[s] =
+        (packed & 0x40) != 0;
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
+    }
+
+    return true;
+  }
+
   void OnDataReceive(uint64_t data) {
+    // Frog X is intentionally not persisted.
+    frog_x = 26;
+// Restore the selected sequence.
+    current_sequence =
+      constrain(
+        Unpack(data, PackLocation{21, 3}),
+        0,
+        SAVED_SEQUENCES - 1
+      );
 
-    frog_x = Unpack(data, PackLocation{0, 6});
 
-    frog_x = constrain(frog_x, 0, 63);
+    // Restore sequence length.
+    sequence_length =
+      constrain(
+        Unpack(data, PackLocation{24, 4}) + 1,
+        1,
+        FROGSEQ_STEPS
+      );
+
+    // Restore the active FrogSeq sequence.
+    LoadSequenceMemory(current_sequence);
+    for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+
+      const int base = lane * 7;
+
+      lane_reverse[lane] =
+        Unpack(data, PackLocation{base, 1}) != 0;
+
+      lane_rate[lane] =
+        static_cast<TrafficRate>(
+          constrain(
+            Unpack(data, PackLocation{base + 1, 3}),
+            TRAFFIC_DIV_2,
+            TRAFFIC_X4
+          )
+        );
+
+      lane_flow[lane] =
+        constrain(
+          Unpack(data, PackLocation{base + 4, 3}),
+          1,
+          6
+        );
+    }
 
     frog_y = 14;
 
     step = 0;
+
     reset = true;
   }
 
@@ -1002,8 +1390,8 @@ return;
 
     help[HELP_DIGITAL1] = "Clock";
     help[HELP_DIGITAL2] = "Reset";
-    help[HELP_CV1] = "Pitch";
-    help[HELP_CV2] = "";
+    help[HELP_CV1] = "FrogX";
+    help[HELP_CV2] = "FrogY";
     help[HELP_OUT1] = "Pitch";
     help[HELP_OUT2] = "Trigger";
     help[HELP_EXTRA1] = "FrogSeq";
