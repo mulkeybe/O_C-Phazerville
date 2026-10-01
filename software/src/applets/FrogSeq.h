@@ -236,11 +236,41 @@ bool sequence_reset_yes = false;
   uint32_t click_tick = 0;
   int edit_ticker = 0;
 
+  // Collision display state.
+  bool frog_hit = false;
+  uint32_t modifier_display_tick = 0;
+  int modifier_step = -1;
+  int modifier_value = 0;
+  bool modifier_gate = false;
+  const uint8_t *modifier_icon = nullptr;
+  bool modifier_clear_on_next_step = false;
+
+  // Runtime collision Burst state.
+  bool collision_burst_armed = false;
+  uint8_t collision_bursts_to_go = 0;
+  uint8_t collision_burst_count = 0;
+  uint32_t collision_burst_countdown = 0;
+  bool collision_burst_zap = false;
+  uint32_t collision_burst_spacing = 0;
+
   // --------------------------------------------------------------------------
   // Drawing helpers
   // --------------------------------------------------------------------------
 
+  int SafeZoneModifierX() {
+    return 0;
+  }
+
+  int SafeZoneModifierY() {
+    return FROG_Y[0];
+  }
+
   void DrawFrog() {
+
+    if (frog_hit) {
+      gfxIcon(frog_x + 2, frog_y + 1, BURST_ICON);
+      return;
+    }
 
     for (int y = 0; y < 9; y++) {
       for (int x = 0; x < 12; x++) {
@@ -248,6 +278,117 @@ bool sequence_reset_yes = false;
         if (frog_bitmap[y][x])
           gfxPixel(frog_x + x, frog_y + y);
 
+      }
+    }
+  }
+
+  bool FrogCollides(int lane, int car_x) {
+
+    if (frog_lane != lane + 1)
+      return false;
+
+    const int frog_left = frog_x;
+    const int frog_right = frog_x + 12;
+    const int car_left = car_x;
+    const int car_right = car_x + TRAFFIC_WIDTH;
+
+    return frog_left < car_right && frog_right > car_left;
+  }
+
+  void ApplyCollisionModifier(int lane) {
+    modifier_step = step;
+
+    const bool can_burst =
+      lane_rate[lane] == TRAFFIC_X2 ||
+      lane_rate[lane] == TRAFFIC_X3 ||
+      lane_rate[lane] == TRAFFIC_X4;
+
+    // Each car gets exactly one collision result.
+    // ×1 and ÷2: Note or Gate.
+    // ×2, ×3 and ×4: Burst, Note or Gate.
+    const int result = random(can_burst ? 3 : 2);
+
+    // Clear any previous runtime Burst before applying the new result.
+    collision_burst_armed = false;
+    collision_bursts_to_go = 0;
+    collision_burst_count = 0;
+    collision_burst_countdown = 0;
+    collision_burst_spacing = 0;
+
+    if (result == 0 && can_burst) {
+      collision_burst_armed = true;
+      collision_burst_count = 0;
+      collision_burst_countdown = 0;
+
+      switch (lane_rate[lane]) {
+        case TRAFFIC_X2:
+          collision_bursts_to_go = 2;
+          collision_burst_spacing =
+            max(1u, ClockCycleTicks(0) / 2);
+          break;
+
+        case TRAFFIC_X3:
+          collision_bursts_to_go = 3;
+          collision_burst_spacing =
+            max(1u, ClockCycleTicks(0) / 3);
+          break;
+
+        case TRAFFIC_X4:
+          collision_bursts_to_go = 4;
+          collision_burst_spacing =
+            max(1u, ClockCycleTicks(0) / 4);
+          break;
+
+        default:
+          collision_burst_armed = false;
+          break;
+      }
+
+      modifier_gate = false;
+      modifier_icon = BURST_ICON;
+      modifier_value = collision_bursts_to_go;
+      modifier_clear_on_next_step = true;
+    }
+    else if (result == (can_burst ? 1 : 0)) {
+      modifier_clear_on_next_step = false;
+      modifier_gate = false;
+      modifier_icon = NOTE_ICON;
+      modifier_value = random(-12, 13);
+      SetFrogNote(
+        GetFrogNote(step) + modifier_value,
+        step
+      );
+    }
+    else {
+      modifier_clear_on_next_step = false;
+      ToggleMute(step);
+      modifier_gate = true;
+      modifier_icon = GATE_ICON;
+      modifier_value = muted(step) ? 0 : 1;
+    }
+
+    modifier_display_tick = OC::CORE::ticks;
+  }
+
+  void CheckTrafficCollisions() {
+
+    if (frog_lane == 0 || frog_hit)
+      return;
+
+    for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+      for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
+
+        if (!traffic[lane][i].active)
+          continue;
+
+        if (FrogCollides(lane, traffic[lane][i].x)) {
+          traffic[lane][i].active = false;
+          frog_hit = true;
+
+          // The individual car determines exactly one collision result.
+          ApplyCollisionModifier(lane);
+          return;
+        }
       }
     }
   }
@@ -346,6 +487,8 @@ bool sequence_reset_yes = false;
         }
       }
     }
+
+    CheckTrafficCollisions();
   }
 
   static constexpr int FLOW_CHANCE[7] = {
@@ -486,6 +629,72 @@ bool sequence_reset_yes = false;
     );
 
     DrawFrog();
+
+    // Runtime Collision Burst display in the Safe Zone.
+    // Burst display replaces the normal modifier information while active.
+    if (collision_burst_zap || collision_bursts_to_go > 0) {
+      const int x = SafeZoneModifierX();
+      const int y = SafeZoneModifierY();
+
+      const int display_bursts =
+        constrain(collision_bursts_to_go, 0, 4);
+
+      if (collision_burst_zap) {
+        const int total_bursts =
+          constrain(
+            collision_burst_count + collision_bursts_to_go,
+            1,
+            4
+          );
+
+        gfxIcon(
+          max(0, x + 1 + ((total_bursts - 1) * 5) - 2),
+          y,
+          ZAP_ICON
+        );
+      }
+
+      for (int i = 0; i < display_bursts; i++)
+        gfxFrame(x + 1 + (i * 5), y + 3, 3, 3);
+    }
+    else if (modifier_icon &&
+             OC::CORE::ticks - modifier_display_tick <
+               HEMISPHERE_CURSOR_TICKS * 6 &&
+             modifier_step >= 0) {
+
+      const int x = SafeZoneModifierX();
+      const int y = SafeZoneModifierY();
+
+      // Fixed two-digit step field: 01-16.
+      const int step_number = modifier_step + 1;
+      gfxBitmap(x, y, 8, TEENS_8X8 + (step_number / 10) * 8);
+      gfxBitmap(x + 8, y, 8, TEENS_8X8 + (step_number % 10) * 8);
+
+      // Collision modifier icon.
+      gfxIcon(x + 16, y, modifier_icon);
+
+      if (modifier_gate) {
+        // Gate state is represented entirely by its bitmap.
+        gfxIcon(x + 24, y, modifier_value ? BTN_ON_ICON : BTN_OFF_ICON);
+      }
+      else if (modifier_icon == BURST_ICON) {
+        // Burst count.
+        const int amount = modifier_value;
+        gfxBitmap(x + 24, y, 8, TEENS_8X8 + (amount / 10) * 8);
+        gfxBitmap(x + 32, y, 8, TEENS_8X8 + (amount % 10) * 8);
+      }
+      else {
+        // Note amount is absolute; negative values invert the value bitmap.
+        const int amount = abs(modifier_value);
+        const int value_x = x + 24;
+
+        gfxBitmap(value_x, y, 8, TEENS_8X8 + (amount / 10) * 8);
+        gfxBitmap(value_x + 8, y, 8, TEENS_8X8 + (amount % 10) * 8);
+
+        if (modifier_value < 0)
+          gfxInvert(value_x, y, 16, 8);
+      }
+    }
 
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
@@ -701,8 +910,13 @@ DrawStepCounter();
       frog_y = FROG_Y[frog_lane];
 
       // Safe Zone is narrower because NOTE/RANDOM occupy the upper-right.
-      if (frog_lane == 0)
+      if (frog_lane == 0) {
         frog_x = constrain(frog_x, 0, 31);
+        modifier_icon = nullptr;
+        modifier_step = -1;
+        modifier_value = 0;
+        modifier_gate = false;
+      }
 
     }
 
@@ -794,6 +1008,13 @@ public:
   // --------------------------------------------------------------------------
 
   void Start() {
+    frog_hit = false;
+    modifier_display_tick = 0;
+    modifier_icon = nullptr;
+    modifier_clear_on_next_step = false;
+    collision_burst_armed = false;
+    collision_burst_count = 0;
+    collision_burst_zap = false;
 
     frog_x = 26;
     frog_y = FROG_Y[0];
@@ -830,15 +1051,84 @@ public:
       traffic_initialized = true;
     }
 
-
     if (Clock(1)) {
       ResetSequence();
     }
 
     const bool clocked = Clock(0);
-    MoveTraffic(clocked);
-    if (clocked) {
 
+    if (clocked) {
+      frog_hit = false;
+
+      if (modifier_clear_on_next_step) {
+        modifier_icon = nullptr;
+        modifier_clear_on_next_step = false;
+      }
+
+      // The previous Burst display ends at the new master-clock step.
+      // A Burst beginning on this same clock will turn ZAP back on.
+      collision_burst_zap = false;
+    }
+
+    MoveTraffic(clocked);
+
+    // Collision Burst ratchet.
+    //
+    // The master clock is trigger #1. Remaining triggers are
+    // generated between master clocks using the Burst-style
+    // countdown timer. The sequence step does not advance
+    // during the ratchet.
+    if (collision_burst_armed) {
+
+      const uint32_t burst_spacing = collision_burst_spacing;
+
+      if (clocked) {
+
+        AdvanceSequence();
+
+        collision_burst_count = 1;
+        collision_burst_zap = true;
+
+        int play_cv = MIDIQuantizer::CV(current_note + 36);
+        play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
+        Out(0, play_cv);
+        ClockOut(1);
+
+        --collision_bursts_to_go;
+
+        if (collision_bursts_to_go > 0) {
+          collision_burst_countdown = burst_spacing;
+        }
+        else {
+          collision_burst_armed = false;
+        }
+      }
+      else if (collision_burst_count > 0 &&
+               collision_bursts_to_go > 0) {
+
+        if (collision_burst_countdown > 0)
+          --collision_burst_countdown;
+
+        if (collision_burst_countdown == 0) {
+
+          int play_cv = MIDIQuantizer::CV(current_note + 36);
+          play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
+          Out(0, play_cv);
+          ClockOut(1);
+
+          ++collision_burst_count;
+          --collision_bursts_to_go;
+
+          if (collision_bursts_to_go > 0)
+            collision_burst_countdown = burst_spacing;
+          else
+            collision_burst_armed = false;
+        }
+      }
+    }
+
+    // Normal master-clock sequence playback.
+    else if (clocked) {
 
       AdvanceSequence();
 
@@ -1247,8 +1537,7 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const uint8_t packed =
         note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
+        | (sequence_mutes[s] ? 0x40 : 0);
 
       Pack(
         data,
@@ -1271,8 +1560,7 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const uint8_t packed =
         note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
+        | (sequence_mutes[s] ? 0x40 : 0);
 
       Pack(
         data,
@@ -1303,8 +1591,6 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       sequence_mutes[s] =
         (packed & 0x40) != 0;
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
     }
 
     if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
@@ -1322,8 +1608,6 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       sequence_mutes[s] =
         (packed & 0x40) != 0;
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
     }
 
     return true;
@@ -1351,6 +1635,10 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
     // Restore the active FrogSeq sequence.
     LoadSequenceMemory(current_sequence);
+
+    collision_burst_armed = false;
+    collision_burst_count = 0;
+
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const int base = lane * 7;
@@ -1389,9 +1677,9 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
   void SetHelp() {
 
     help[HELP_DIGITAL1] = "Clock";
-    help[HELP_DIGITAL2] = "Reset";
-    help[HELP_CV1] = "FrogX";
-    help[HELP_CV2] = "FrogY";
+    help[HELP_DIGITAL2] = "Restore";
+    help[HELP_CV1] = "Frog X";
+    help[HELP_CV2] = "Frog Y";
     help[HELP_OUT1] = "Pitch";
     help[HELP_OUT2] = "Trigger";
     help[HELP_EXTRA1] = "FrogSeq";
