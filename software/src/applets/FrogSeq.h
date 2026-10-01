@@ -129,6 +129,11 @@ private:
   static constexpr int FROGSEQ_DATA_START = 0;
   static constexpr int FROGSEQ_DATA_SLOTS = SAVED_SEQUENCES * 2;
 
+  static constexpr int FROGSEQ_RESTORE_SLOT_1 =
+    FROGSEQ_DATA_START + FROGSEQ_DATA_SLOTS;
+  static constexpr int FROGSEQ_RESTORE_SLOT_2 =
+    FROGSEQ_RESTORE_SLOT_1 + 1;
+
 
   uint8_t current_sequence = 0;
   bool sequence_menu = false;
@@ -1052,7 +1057,7 @@ public:
     }
 
     if (Clock(1)) {
-      ResetSequence();
+      RestoreSequence();
     }
 
     const bool clocked = Clock(0);
@@ -1525,6 +1530,98 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     return data;
   }
 
+  void SaveRestoreSnapshot() {
+    uint64_t data = 0;
+
+    for (int s = 0; s < 8; ++s) {
+      const uint8_t note =
+        constrain(sequence_notes[s] + 24, 0, 59);
+
+      const uint8_t packed =
+        note
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
+
+      Pack(data, PackLocation{s * 8, 8}, packed);
+    }
+
+    SetData(FROGSEQ_RESTORE_SLOT_1, data);
+
+    data = 0;
+
+    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
+      const int offset = (s - 8) * 8;
+
+      const uint8_t note =
+        constrain(sequence_notes[s] + 24, 0, 59);
+
+      const uint8_t packed =
+        note
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
+
+      Pack(data, PackLocation{offset, 8}, packed);
+    }
+
+    SetData(FROGSEQ_RESTORE_SLOT_2, data);
+  }
+
+  bool RestoreSequence() {
+    uint64_t data = 0;
+
+    if (!GetData(FROGSEQ_RESTORE_SLOT_1, data))
+      return false;
+
+    for (int s = 0; s < 8; ++s) {
+      const int offset = s * 8;
+      const uint8_t packed =
+        Unpack(data, PackLocation{offset, 8});
+
+      sequence_notes[s] =
+        constrain((packed & 0x3f) - 24, -24, 35);
+      sequence_mutes[s] =
+        (packed & 0x40) != 0;
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
+    }
+
+    if (!GetData(FROGSEQ_RESTORE_SLOT_2, data))
+      return false;
+
+    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
+      const int offset = (s - 8) * 8;
+      const uint8_t packed =
+        Unpack(data, PackLocation{offset, 8});
+
+      sequence_notes[s] =
+        constrain((packed & 0x3f) - 24, -24, 35);
+      sequence_mutes[s] =
+        (packed & 0x40) != 0;
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
+    }
+
+    frog_hit = false;
+    modifier_icon = nullptr;
+    modifier_step = -1;
+    modifier_value = 0;
+    modifier_gate = false;
+    modifier_clear_on_next_step = false;
+
+    collision_burst_armed = false;
+    collision_bursts_to_go = 0;
+    collision_burst_count = 0;
+    collision_burst_countdown = 0;
+    collision_burst_zap = false;
+    collision_burst_spacing = 0;
+
+    step = 0;
+    reset = true;
+    current_note = GetFrogNote(0);
+
+    return true;
+  }
+
   void SaveSequenceMemory(uint8_t sequence) {
 
     uint64_t data = 0;
@@ -1537,7 +1634,8 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const uint8_t packed =
         note
-        | (sequence_mutes[s] ? 0x40 : 0);
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
 
       Pack(
         data,
@@ -1560,7 +1658,8 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const uint8_t packed =
         note
-        | (sequence_mutes[s] ? 0x40 : 0);
+        | (sequence_mutes[s] ? 0x40 : 0)
+        | (sequence_bursts[s] ? 0x80 : 0);
 
       Pack(
         data,
@@ -1591,6 +1690,9 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       sequence_mutes[s] =
         (packed & 0x40) != 0;
+
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
     }
 
     if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
@@ -1608,6 +1710,9 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       sequence_mutes[s] =
         (packed & 0x40) != 0;
+
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
     }
 
     return true;
@@ -1635,6 +1740,7 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
     // Restore the active FrogSeq sequence.
     LoadSequenceMemory(current_sequence);
+    SaveRestoreSnapshot();
 
     collision_burst_armed = false;
     collision_burst_count = 0;
@@ -1682,8 +1788,8 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     help[HELP_CV2] = "Frog Y";
     help[HELP_OUT1] = "Pitch";
     help[HELP_OUT2] = "Trigger";
-    help[HELP_EXTRA1] = "FrogSeq";
-    help[HELP_EXTRA2] = "Note Seq";
+    help[HELP_EXTRA1] = "Collision is the mechanism";
+    help[HELP_EXTRA2] = "by which the music is created.";
   }
 
 };
