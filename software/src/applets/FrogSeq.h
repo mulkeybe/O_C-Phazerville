@@ -60,7 +60,7 @@ public:
   }
 
   const uint8_t* applet_icon() {
-    return ZAP_ICON;
+    return INVERT_CAR_ICON;
   }
 
   enum Page {
@@ -111,11 +111,15 @@ private:
   int8_t frog_x = 26;
   int8_t frog_y = 14;
 
+  int frog_x_reference = 26;
+  int frog_y_position = 0;
+
   bool frog_horizontal = true;
 
   // Frog positions: Safe Zone, Lane 1, Lane 2, Lane 3.
   static constexpr int FROG_Y[4] = {13, 28, 41, 53};
   int frog_lane = 0;
+  int frog_y_reference = 0;
 
   // --------------------------------------------------------------------------
   // Traffic
@@ -145,8 +149,8 @@ private:
   };
 
   uint8_t sequence_menu_mode = SEQUENCE_LOAD;
-bool sequence_reset_confirm = false;
-bool sequence_reset_yes = false;
+  bool sequence_reset_confirm = false;
+  bool sequence_reset_yes = false;
   bool sequence_slot_mode = false;
   uint8_t selected_sequence = 0;
 
@@ -165,9 +169,16 @@ bool sequence_reset_yes = false;
     TRAFFIC_X3,
     TRAFFIC_X4
   };
+  enum TrafficModifier {
+    MODIFIER_NOTE,
+    MODIFIER_GATE,
+    MODIFIER_BURST
+  };
+
   struct TrafficObject {
     int x;
     bool active;
+    TrafficModifier modifier;
   };
 
   TrafficObject traffic[TRAFFIC_LANES][TRAFFIC_OBJECTS];
@@ -182,7 +193,9 @@ bool sequence_reset_yes = false;
     TRAFFIC_X4,
     TRAFFIC_X1,
     TRAFFIC_DIV_2
-  };  int lane_flow[TRAFFIC_LANES] = {
+  };
+
+  int lane_flow[TRAFFIC_LANES] = {
     5,
     5,
     5
@@ -192,7 +205,6 @@ bool sequence_reset_yes = false;
   uint32_t traffic_last_move_tick[TRAFFIC_LANES] = {0, 0, 0};
   uint32_t traffic_clock_ticks = 1;
   bool traffic_clock_valid = false;
-  bool traffic_initialized = false;
 
   int8_t sequence_notes[FROGSEQ_STEPS];
   bool sequence_mutes[FROGSEQ_STEPS];
@@ -210,10 +222,6 @@ bool sequence_reset_yes = false;
 
   bool muted(int step) {
     return sequence_mutes[step];
-  }
-
-  void Unmute(int step) {
-    sequence_mutes[step] = false;
   }
 
   void SetMute(int step, bool on) {
@@ -239,7 +247,6 @@ bool sequence_reset_yes = false;
 
   int current_note = 0;
   uint32_t click_tick = 0;
-  int edit_ticker = 0;
 
   // Collision display state.
   bool frog_hit = false;
@@ -263,7 +270,7 @@ bool sequence_reset_yes = false;
   // --------------------------------------------------------------------------
 
   int SafeZoneModifierX() {
-    return 0;
+    return 3;
   }
 
   int SafeZoneModifierY() {
@@ -292,15 +299,19 @@ bool sequence_reset_yes = false;
     if (frog_lane != lane + 1)
       return false;
 
-    const int frog_left = frog_x;
-    const int frog_right = frog_x + 12;
-    const int car_left = car_x;
-    const int car_right = car_x + TRAFFIC_WIDTH;
+    const int frog_left = frog_x + 2;
+    const int frog_right = frog_x + 10;
+    // Burst truck uses its full 10-pixel body as the strike zone.
+    const int truck_left = car_x;
+    const int truck_right = car_x + 10;
 
-    return frog_left < car_right && frog_right > car_left;
+    return frog_left < truck_right && frog_right > truck_left;
   }
 
-  void ApplyCollisionModifier(int lane) {
+  void ApplyCollisionModifier(
+    int lane,
+    TrafficModifier modifier
+  ) {
     modifier_step = step;
 
     const bool can_burst =
@@ -308,10 +319,9 @@ bool sequence_reset_yes = false;
       lane_rate[lane] == TRAFFIC_X3 ||
       lane_rate[lane] == TRAFFIC_X4;
 
-    // Each car gets exactly one collision result.
+    // The car already chose its modifier when it spawned.
     // ×1 and ÷2: Note or Gate.
     // ×2, ×3 and ×4: Burst, Note or Gate.
-    const int result = random(can_burst ? 3 : 2);
 
     // Clear any previous runtime Burst before applying the new result.
     collision_burst_armed = false;
@@ -320,9 +330,8 @@ bool sequence_reset_yes = false;
     collision_burst_countdown = 0;
     collision_burst_spacing = 0;
 
-    if (result == 0 && can_burst) {
+    if (modifier == MODIFIER_BURST && can_burst) {
       collision_burst_armed = true;
-      collision_burst_count = 0;
       collision_burst_countdown = 0;
 
       switch (lane_rate[lane]) {
@@ -354,7 +363,7 @@ bool sequence_reset_yes = false;
       modifier_value = collision_bursts_to_go;
       modifier_clear_on_next_step = true;
     }
-    else if (result == (can_burst ? 1 : 0)) {
+    else if (modifier == MODIFIER_NOTE) {
       modifier_clear_on_next_step = false;
       modifier_gate = false;
       modifier_icon = NOTE_ICON;
@@ -390,8 +399,8 @@ bool sequence_reset_yes = false;
           traffic[lane][i].active = false;
           frog_hit = true;
 
-          // The individual car determines exactly one collision result.
-          ApplyCollisionModifier(lane);
+          // The car already chose its modifier when it spawned.
+          ApplyCollisionModifier(lane, traffic[lane][i].modifier);
           return;
         }
       }
@@ -400,7 +409,6 @@ bool sequence_reset_yes = false;
 
   void MoveTraffic(bool clocked) {
     const uint32_t now = OC::CORE::ticks;
-
     if (clocked) {
       traffic_clock_ticks = max(1u, ClockCycleTicks(0));
       traffic_clock_valid = true;
@@ -409,6 +417,13 @@ bool sequence_reset_yes = false;
 
     if (!traffic_clock_valid)
       return;
+
+    // Stop traffic when the external clock has stopped.
+    if (!clocked &&
+        now - traffic_last_clock_tick >= traffic_clock_ticks) {
+      traffic_clock_valid = false;
+      return;
+    }
 
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
       uint32_t move_ticks = traffic_clock_ticks;
@@ -422,9 +437,6 @@ bool sequence_reset_yes = false;
           break;
         case TRAFFIC_X2:
           move_ticks = max(1u, traffic_clock_ticks / 2);
-          break;
-        case TRAFFIC_X1:
-          move_ticks = traffic_clock_ticks;
           break;
         case TRAFFIC_DIV_2:
           move_ticks = traffic_clock_ticks * 2;
@@ -487,6 +499,27 @@ bool sequence_reset_yes = false;
           if (!traffic[lane][i].active) {
             traffic[lane][i].active = true;
             traffic[lane][i].x = spawn_x;
+
+            const bool can_burst =
+              lane_rate[lane] == TRAFFIC_X2 ||
+              lane_rate[lane] == TRAFFIC_X3 ||
+              lane_rate[lane] == TRAFFIC_X4;
+
+            const int roll = random(100);
+
+            if (can_burst) {
+              if (roll < 60)
+                traffic[lane][i].modifier = MODIFIER_NOTE;
+              else if (roll < 85)
+                traffic[lane][i].modifier = MODIFIER_GATE;
+              else
+                traffic[lane][i].modifier = MODIFIER_BURST;
+            }
+            else {
+              traffic[lane][i].modifier =
+                roll < 65 ? MODIFIER_NOTE : MODIFIER_GATE;
+            }
+
             break;
           }
         }
@@ -508,33 +541,79 @@ bool sequence_reset_yes = false;
 
   void ResetTraffic() {
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
+
+      const bool can_burst =
+        lane_rate[lane] == TRAFFIC_X2 ||
+        lane_rate[lane] == TRAFFIC_X3 ||
+        lane_rate[lane] == TRAFFIC_X4;
+
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
         traffic[lane][i].active = (i == 0);
-        traffic[lane][i].x = lane_reverse[lane] ? 64 : -TRAFFIC_WIDTH;
+        traffic[lane][i].x =
+          lane_reverse[lane] ? 64 : -TRAFFIC_WIDTH;
+
+        const int roll = random(100);
+
+        if (can_burst) {
+          if (roll < 60)
+            traffic[lane][i].modifier = MODIFIER_NOTE;
+          else if (roll < 85)
+            traffic[lane][i].modifier = MODIFIER_GATE;
+          else
+            traffic[lane][i].modifier = MODIFIER_BURST;
+        }
+        else {
+          traffic[lane][i].modifier =
+            roll < 65 ? MODIFIER_NOTE : MODIFIER_GATE;
+        }
       }
     }
   }
 
-  void DrawTrafficObject(int lane, int x) {
+  void DrawTrafficIcon(int x, int y, const uint8_t *icon) {
+    for (int col = 0; col < 8; ++col) {
+      for (int row = 0; row < 8; ++row) {
+        const int px = x + col;
 
-    const int y = FROG_Y[lane + 1] + 3;
+        if (px < 0 || px >= 64)
+          continue;
 
-    const int draw_x = max(x, 0);
-    const int draw_right = min(x + TRAFFIC_WIDTH, 64);
-    const int draw_width = draw_right - draw_x;
+        if (icon[col] & (1 << row))
+          gfxPixel(px, y + row);
+      }
+    }
+  }
 
-    if (draw_width > 0)
-      gfxFrame(draw_x, y, draw_width, 5);
+  void DrawTrafficObject(int lane, int x, int object) {
 
-    const int wheel1_x = x + 2;
-    const int wheel2_x = x + 8;
+    const int y = FROG_Y[lane + 1] + 1;
 
-    if (wheel1_x >= 0 && wheel1_x < 64)
-      gfxPixel(wheel1_x, y + 5);
+    if (traffic[lane][object].modifier == MODIFIER_BURST) {
+      const int draw_x = max(x, 0);
+      const int draw_right = min(x + TRAFFIC_WIDTH, 64);
+      const int draw_width = draw_right - draw_x;
 
-    if (wheel2_x >= 0 && wheel2_x < 64)
-      gfxPixel(wheel2_x, y + 5);
+      if (draw_width > 0)
+        gfxFrame(draw_x, y, draw_width, 5);
 
+      const int wheel1_x = x + 2;
+      const int wheel2_x = x + 8;
+
+      if (wheel1_x >= 0 && wheel1_x < 64)
+        gfxPixel(wheel1_x, y + 5);
+
+      if (wheel2_x >= 0 && wheel2_x < 64)
+        gfxPixel(wheel2_x, y + 5);
+
+      return;
+    }
+
+    const uint8_t *icon =
+      traffic[lane][object].modifier == MODIFIER_GATE
+        ? (lane_reverse[lane] ? INVERT_CAR_ICON : INVERT_CAR_RIGHT_ICON)
+        : (lane_reverse[lane] ? CAR_ICON : CAR_RIGHT_ICON);
+
+    DrawTrafficIcon(x, y, icon);
   }
 
   void DrawStepCounter() {
@@ -637,7 +716,8 @@ bool sequence_reset_yes = false;
 
     // Runtime Collision Burst display in the Safe Zone.
     // Burst display replaces the normal modifier information while active.
-    if (collision_burst_zap || collision_bursts_to_go > 0) {
+    if (frog_lane > 0 &&
+        (collision_burst_zap || collision_bursts_to_go > 0)) {
       const int x = SafeZoneModifierX();
       const int y = SafeZoneModifierY();
 
@@ -662,7 +742,8 @@ bool sequence_reset_yes = false;
       for (int i = 0; i < display_bursts; i++)
         gfxFrame(x + 1 + (i * 5), y + 3, 3, 3);
     }
-    else if (modifier_icon &&
+    else if (frog_lane > 0 &&
+             modifier_icon &&
              OC::CORE::ticks - modifier_display_tick <
                HEMISPHERE_CURSOR_TICKS * 6 &&
              modifier_step >= 0) {
@@ -672,39 +753,36 @@ bool sequence_reset_yes = false;
 
       // Fixed two-digit step field: 01-16.
       const int step_number = modifier_step + 1;
-      gfxBitmap(x, y, 8, TEENS_8X8 + (step_number / 10) * 8);
-      gfxBitmap(x + 8, y, 8, TEENS_8X8 + (step_number % 10) * 8);
+      gfxBitmap(x, y, 8, TEENS_8X8 + step_number * 8);
 
       // Collision modifier icon.
-      gfxIcon(x + 16, y, modifier_icon);
+      gfxIcon(x + 10, y, modifier_icon);
 
       if (modifier_gate) {
         // Gate state is represented entirely by its bitmap.
-        gfxIcon(x + 24, y, modifier_value ? BTN_ON_ICON : BTN_OFF_ICON);
-      }
-      else if (modifier_icon == BURST_ICON) {
-        // Burst count.
-        const int amount = modifier_value;
-        gfxBitmap(x + 24, y, 8, TEENS_8X8 + (amount / 10) * 8);
-        gfxBitmap(x + 32, y, 8, TEENS_8X8 + (amount % 10) * 8);
+        gfxIcon(x + 20, y, modifier_value ? CHECK_ON_ICON : CHECK_OFF_ICON);
       }
       else {
-        // Note amount is absolute; negative values invert the value bitmap.
-        const int amount = abs(modifier_value);
-        const int value_x = x + 24;
+        // Note amount uses one TEENS glyph; negative values invert it.
+        const int amount = constrain(abs(modifier_value), 0, 19);
+        const int value_x = x + 20;
 
-        gfxBitmap(value_x, y, 8, TEENS_8X8 + (amount / 10) * 8);
-        gfxBitmap(value_x + 8, y, 8, TEENS_8X8 + (amount % 10) * 8);
+        gfxBitmap(
+          value_x,
+          y,
+          8,
+          TEENS_8X8 + amount * 8
+        );
 
         if (modifier_value < 0)
-          gfxInvert(value_x, y, 16, 8);
+          gfxInvert(value_x, y, 8, 8);
       }
     }
 
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
         if (traffic[lane][i].active)
-          DrawTrafficObject(lane, traffic[lane][i].x);
+          DrawTrafficObject(lane, traffic[lane][i].x, i);
       }
     }
 
@@ -825,7 +903,7 @@ DrawStepCounter();
   for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     const int y = lane_y[lane];
 
-    char lane_label[] = { "L"[0], char("1"[0] + lane), "\0"[0] };
+    char lane_label[] = { 'L', char('1' + lane), '\0' };
     gfxPrint(0, y + 1, lane_label);
 
     gfxIcon(13, y,
@@ -906,12 +984,17 @@ DrawStepCounter();
 
       // Safe Zone is restricted; lanes use the full playfield width.
       const int max_x = (frog_lane == 0) ? 31 : 52;
-      frog_x = constrain(frog_x + direction, 0, max_x);
+      frog_x_reference = constrain(
+        frog_x_reference + direction,
+        0,
+        max_x
+      );
 
     } else {
 
-      // Vertical movement snaps through Safe Zone and three lanes.
-      frog_lane = constrain(frog_lane + direction, 0, 3);
+      // Vertical movement changes the persistent reference position.
+      frog_y_reference = constrain(frog_y_reference + direction, 0, 3);
+      frog_lane = frog_y_reference;
       frog_y = FROG_Y[frog_lane];
 
       // Safe Zone is narrower because NOTE/RANDOM occupy the upper-right.
@@ -989,21 +1072,18 @@ DrawStepCounter();
     SetLabel(midi_note_numbers[notenum]);
 
 
-    edit_ticker = 5000;
   }
 
   void ToggleSequenceBurst() {
 
     ToggleBurst(cursor);
 
-    edit_ticker = 5000;
   }
 
   void ToggleSequenceMute() {
 
     ToggleMute(cursor);
 
-    edit_ticker = 5000;
   }
 
 public:
@@ -1040,7 +1120,6 @@ public:
     current_note = GetFrogNote(0);
 
     click_tick = 0;
-    edit_ticker = 0;
 
     step = 0;
     reset = true;
@@ -1051,10 +1130,23 @@ public:
   // --------------------------------------------------------------------------
 
   void Controller() {
-    if (!traffic_initialized) {
-      ResetTraffic();
-      traffic_initialized = true;
-    }
+    const int frog_x_max = (frog_lane == 0) ? 31 : 52;
+
+    frog_x = frog_x_reference;
+    Modulate(frog_x, 0, 0, frog_x_max);
+
+    frog_x = constrain(frog_x, 0, frog_x_max);
+
+    const int frog_y_mod = constrain(SemitoneIn(1) / 12, -3, 3);
+
+    frog_y_position = constrain(
+      frog_y_reference + frog_y_mod,
+      0,
+      3
+    );
+
+    frog_y = FROG_Y[frog_y_position];
+    frog_lane = frog_y_position;
 
     if (Clock(1)) {
       RestoreSequence();
@@ -1151,9 +1243,6 @@ public:
         ClockOut(1);
       }
     }
-
-    if (edit_ticker)
-      --edit_ticker;
   }
 
   // --------------------------------------------------------------------------
@@ -1286,7 +1375,6 @@ return;
   }
 
   // --------------------------------------------------------------------------
-  // --------------------------------------------------------------------------
   // Button
   // --------------------------------------------------------------------------
 
@@ -1323,6 +1411,7 @@ return;
           reset = true;
           current_note = GetFrogNote(0);
           SaveSequenceMemory(current_sequence);
+          SaveRestoreSnapshot();
         }
 
         sequence_reset_confirm = false;
@@ -1350,12 +1439,15 @@ return;
 
       if (sequence_slot_mode) {
         if (sequence_menu_mode == SEQUENCE_LOAD) {
-          if (LoadSequenceMemory(selected_sequence))
+          if (LoadSequenceMemory(selected_sequence)) {
             current_sequence = selected_sequence;
+            SaveRestoreSnapshot();
+          }
         }
         else if (sequence_menu_mode == SEQUENCE_MOVE) {
           SaveSequenceMemory(selected_sequence);
           current_sequence = selected_sequence;
+          SaveRestoreSnapshot();
         }
 
         sequence_slot_mode = false;
@@ -1526,14 +1618,15 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
 // Save the currently active sequence to RAM.
     SaveSequenceMemory(current_sequence);
+    SaveRestoreSnapshot();
 
     return data;
   }
 
-  void SaveRestoreSnapshot() {
+  uint64_t PackSequenceSteps(int first_step) {
     uint64_t data = 0;
 
-    for (int s = 0; s < 8; ++s) {
+    for (int s = first_step; s < first_step + 8; ++s) {
       const uint8_t note =
         constrain(sequence_notes[s] + 24, 0, 59);
 
@@ -1542,28 +1635,41 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
         | (sequence_mutes[s] ? 0x40 : 0)
         | (sequence_bursts[s] ? 0x80 : 0);
 
-      Pack(data, PackLocation{s * 8, 8}, packed);
+      Pack(
+        data,
+        PackLocation{(s - first_step) * 8, 8},
+        packed
+      );
     }
 
-    SetData(FROGSEQ_RESTORE_SLOT_1, data);
+    return data;
+  }
 
-    data = 0;
-
-    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
-      const int offset = (s - 8) * 8;
-
-      const uint8_t note =
-        constrain(sequence_notes[s] + 24, 0, 59);
-
+  void UnpackSequenceSteps(uint64_t data, int first_step) {
+    for (int s = first_step; s < first_step + 8; ++s) {
+      const int offset = (s - first_step) * 8;
       const uint8_t packed =
-        note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
+        Unpack(data, PackLocation{offset, 8});
 
-      Pack(data, PackLocation{offset, 8}, packed);
+      sequence_notes[s] =
+        constrain((packed & 0x3f) - 24, -24, 35);
+      sequence_mutes[s] =
+        (packed & 0x40) != 0;
+      sequence_bursts[s] =
+        (packed & 0x80) != 0;
     }
+  }
 
-    SetData(FROGSEQ_RESTORE_SLOT_2, data);
+  void SaveRestoreSnapshot() {
+    SetData(
+      FROGSEQ_RESTORE_SLOT_1,
+      PackSequenceSteps(0)
+    );
+
+    SetData(
+      FROGSEQ_RESTORE_SLOT_2,
+      PackSequenceSteps(8)
+    );
   }
 
   bool RestoreSequence() {
@@ -1572,34 +1678,12 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     if (!GetData(FROGSEQ_RESTORE_SLOT_1, data))
       return false;
 
-    for (int s = 0; s < 8; ++s) {
-      const int offset = s * 8;
-      const uint8_t packed =
-        Unpack(data, PackLocation{offset, 8});
-
-      sequence_notes[s] =
-        constrain((packed & 0x3f) - 24, -24, 35);
-      sequence_mutes[s] =
-        (packed & 0x40) != 0;
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
-    }
+    UnpackSequenceSteps(data, 0);
 
     if (!GetData(FROGSEQ_RESTORE_SLOT_2, data))
       return false;
 
-    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
-      const int offset = (s - 8) * 8;
-      const uint8_t packed =
-        Unpack(data, PackLocation{offset, 8});
-
-      sequence_notes[s] =
-        constrain((packed & 0x3f) - 24, -24, 35);
-      sequence_mutes[s] =
-        (packed & 0x40) != 0;
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
-    }
+    UnpackSequenceSteps(data, 8);
 
     frog_hit = false;
     modifier_icon = nullptr;
@@ -1623,97 +1707,29 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
   }
 
   void SaveSequenceMemory(uint8_t sequence) {
+    SetData(
+      FROGSEQ_DATA_START + sequence * 2,
+      PackSequenceSteps(0)
+    );
 
-    uint64_t data = 0;
-
-    // Steps 1-8: 8 bits per step.
-    for (int s = 0; s < 8; ++s) {
-
-      const uint8_t note =
-        constrain(sequence_notes[s] + 24, 0, 59);
-
-      const uint8_t packed =
-        note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
-
-      Pack(
-        data,
-        PackLocation{s * 8, 8},
-        packed
-      );
-    }
-
-    SetData(FROGSEQ_DATA_START + sequence * 2, data);
-
-    data = 0;
-
-    // Steps 9-16: 8 bits per step.
-    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
-
-      const int offset = (s - 8) * 8;
-
-      const uint8_t note =
-        constrain(sequence_notes[s] + 24, 0, 59);
-
-      const uint8_t packed =
-        note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
-
-      Pack(
-        data,
-        PackLocation{offset, 8},
-        packed
-      );
-    }
-
-    SetData(FROGSEQ_DATA_START + sequence * 2 + 1, data);
+    SetData(
+      FROGSEQ_DATA_START + sequence * 2 + 1,
+      PackSequenceSteps(8)
+    );
   }
 
   bool LoadSequenceMemory(uint8_t sequence) {
-
     uint64_t data = 0;
 
     if (!GetData(FROGSEQ_DATA_START + sequence * 2, data))
       return false;
 
-    for (int s = 0; s < 8; ++s) {
-
-      const int offset = s * 8;
-
-      const uint8_t packed =
-        Unpack(data, PackLocation{offset, 8});
-
-      sequence_notes[s] =
-        constrain((packed & 0x3f) - 24, -24, 35);
-
-      sequence_mutes[s] =
-        (packed & 0x40) != 0;
-
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
-    }
+    UnpackSequenceSteps(data, 0);
 
     if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
       return false;
 
-    for (int s = 8; s < FROGSEQ_STEPS; ++s) {
-
-      const int offset = (s - 8) * 8;
-
-      const uint8_t packed =
-        Unpack(data, PackLocation{offset, 8});
-
-      sequence_notes[s] =
-        constrain((packed & 0x3f) - 24, -24, 35);
-
-      sequence_mutes[s] =
-        (packed & 0x40) != 0;
-
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
-    }
+    UnpackSequenceSteps(data, 8);
 
     return true;
   }
@@ -1788,8 +1804,8 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     help[HELP_CV2] = "Frog Y";
     help[HELP_OUT1] = "Pitch";
     help[HELP_OUT2] = "Trigger";
-    help[HELP_EXTRA1] = "Collision is the mechanism";
-    help[HELP_EXTRA2] = "by which the music is created.";
+    help[HELP_EXTRA1] = "Collisions modify";
+    help[HELP_EXTRA2] = "Restore=Last Loaded";
   }
 
 };
