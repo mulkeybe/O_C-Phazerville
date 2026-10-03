@@ -1172,7 +1172,8 @@ public:
         ClockOut(1);
 
         --collision_ratchets_to_go;
-        --collision_ratchets_display;
+        if (collision_ratchets_display > 0)
+          --collision_ratchets_display;
 
         if (collision_ratchets_to_go > 0) {
           collision_ratchet_countdown = ratchet_spacing;
@@ -1194,6 +1195,7 @@ public:
 
           ++collision_ratchet_count;
           --collision_ratchets_to_go;
+          if (collision_ratchets_display > 0)
           --collision_ratchets_display;
 
           if (collision_ratchets_to_go > 0)
