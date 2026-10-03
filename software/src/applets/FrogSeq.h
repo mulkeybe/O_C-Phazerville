@@ -172,8 +172,27 @@ private:
   enum TrafficModifier {
     MODIFIER_NOTE,
     MODIFIER_GATE,
-    MODIFIER_BURST
+    MODIFIER_RATCHET
   };
+
+  TrafficModifier RandomTrafficModifier(int lane) {
+    const bool can_ratchet =
+      lane_rate[lane] == TRAFFIC_X2 ||
+      lane_rate[lane] == TRAFFIC_X3 ||
+      lane_rate[lane] == TRAFFIC_X4;
+
+    const int roll = random(100);
+
+    if (can_ratchet) {
+      if (roll < 55)
+        return MODIFIER_NOTE;
+      if (roll < 85)
+        return MODIFIER_GATE;
+      return MODIFIER_RATCHET;
+    }
+
+    return roll < 55 ? MODIFIER_NOTE : MODIFIER_GATE;
+  }
 
   struct TrafficObject {
     int x;
@@ -208,7 +227,6 @@ private:
 
   int8_t sequence_notes[FROGSEQ_STEPS];
   bool sequence_mutes[FROGSEQ_STEPS];
-  bool sequence_bursts[FROGSEQ_STEPS];
   int step = 0;
   bool reset = true;
 
@@ -232,21 +250,14 @@ private:
     sequence_mutes[step] = !sequence_mutes[step];
   }
 
-  bool BurstEnabled(int step) {
-    return sequence_bursts[step];
-  }
-
-  void SetBurst(int step, bool on = true) {
-    sequence_bursts[step] = on;
-  }
-
-  void ToggleBurst(int step) {
-    sequence_bursts[step] = !sequence_bursts[step];
+  void PlayCurrentNote() {
+    int play_cv = MIDIQuantizer::CV(current_note + 36);
+    play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
+    Out(0, play_cv);
   }
 
 
   int current_note = 0;
-  uint32_t click_tick = 0;
 
   // Collision display state.
   uint32_t collision_display_until = 0;
@@ -261,15 +272,14 @@ private:
   int modifier_value = 0;
   bool modifier_gate = false;
   const uint8_t *modifier_icon = nullptr;
-  bool modifier_clear_on_next_step = false;
-
-  // Runtime collision Burst state.
-  bool collision_burst_armed = false;
-  uint8_t collision_ratchets_to_go = 0;
-  uint8_t collision_burst_count = 0;
-  uint32_t collision_burst_countdown = 0;
-  bool collision_burst_zap = false;
-  uint32_t collision_burst_spacing = 0;
+  // Runtime collision Ratchet state.
+  bool collision_ratchet_armed = false;
+  uint8_t collision_ratchets_to_go = 0;       // Actual Ratchets remaining
+  uint8_t collision_ratchets_display = 0;
+  uint8_t collision_ratchet_count = 0;
+  uint32_t collision_ratchet_countdown = 0;
+  bool collision_ratchet_zap = false;
+  uint32_t collision_ratchet_spacing = 0;
 
   // --------------------------------------------------------------------------
   // Drawing helpers
@@ -310,7 +320,7 @@ private:
 
     const int frog_left = frog_x + 2;
     const int frog_right = frog_x + 10;
-    // Burst truck uses its full 10-pixel body as the strike zone.
+    // Ratchet truck uses its full 10-pixel body as the strike zone.
     const int truck_left = car_x;
     const int truck_right = car_x + 10;
 
@@ -323,58 +333,62 @@ private:
   ) {
     modifier_step = step;
 
-    const bool can_burst =
+    const bool can_ratchet =
       lane_rate[lane] == TRAFFIC_X2 ||
       lane_rate[lane] == TRAFFIC_X3 ||
       lane_rate[lane] == TRAFFIC_X4;
 
     // The car already chose its modifier when it spawned.
     // ×1 and ÷2: Note or Gate.
-    // ×2, ×3 and ×4: Burst, Note or Gate.
+    // ×2, ×3 and ×4: Ratchet, Note or Gate.
 
-    // Clear any previous runtime Burst before applying the new result.
-    collision_burst_armed = false;
-    collision_ratchets_to_go = 0;
-    collision_burst_count = 0;
-    collision_burst_countdown = 0;
-    collision_burst_spacing = 0;
-
-    if (modifier == MODIFIER_BURST && can_burst) {
+    if (modifier == MODIFIER_RATCHET && can_ratchet) {
       modifier_icon = nullptr;
-      collision_burst_armed = true;
-      collision_burst_countdown = 0;
 
-      switch (lane_rate[lane]) {
-        case TRAFFIC_X2:
-          collision_ratchets_to_go = 2;
-          collision_burst_spacing =
-            max(1u, ClockCycleTicks(0) / 2);
-          break;
+      // Replace a queued Ratchet, but never interrupt one already firing.
+      if (!collision_ratchet_armed || collision_ratchet_count == 0) {
+        collision_ratchet_armed = true;
+        collision_ratchet_count = 0;
+        collision_ratchet_countdown = 0;
 
-        case TRAFFIC_X3:
-          collision_ratchets_to_go = 3;
-          collision_burst_spacing =
-            max(1u, ClockCycleTicks(0) / 3);
-          break;
+        switch (lane_rate[lane]) {
+          case TRAFFIC_X2:
+            collision_ratchets_to_go = 2;
+            collision_ratchets_display = 2;
+            collision_ratchet_spacing =
+              max(1u, ClockCycleTicks(0) / 2);
+            break;
 
-        case TRAFFIC_X4:
-          collision_ratchets_to_go = 4;
-          collision_burst_spacing =
-            max(1u, ClockCycleTicks(0) / 4);
-          break;
+          case TRAFFIC_X3:
+            collision_ratchets_to_go = 3;
+            collision_ratchets_display = 3;
+            collision_ratchet_spacing =
+              max(1u, ClockCycleTicks(0) / 3);
+            break;
 
-        default:
-          collision_burst_armed = false;
-          break;
+          case TRAFFIC_X4:
+            collision_ratchets_to_go = 4;
+            collision_ratchets_display = 4;
+            collision_ratchet_spacing =
+              max(1u, ClockCycleTicks(0) / 4);
+            break;
+
+          default:
+            collision_ratchet_armed = false;
+            break;
+        }
       }
 
       modifier_gate = false;
     }
     else if (modifier == MODIFIER_NOTE) {
-      modifier_clear_on_next_step = false;
+      collision_ratchets_display = 0;
+      collision_ratchet_zap = false;
       modifier_gate = false;
       modifier_icon = NOTE_ICON;
-      modifier_value = random(-12, 13);
+      modifier_value = random(1, 13);
+    if (random(2))
+      modifier_value = -modifier_value;
       SetFrogNote(
         GetFrogNote(step) + modifier_value,
         step
@@ -384,7 +398,8 @@ private:
         ToggleMute(step);
     }
     else {
-      modifier_clear_on_next_step = false;
+      collision_ratchets_display = 0;
+      collision_ratchet_zap = false;
       ToggleMute(step);
       modifier_gate = true;
       modifier_icon = GATE_ICON;
@@ -414,7 +429,7 @@ private:
 
           // Restart the visual collision response.
           // The first collision shows immediately. A tightly packed
-          // collision briefly blanks the Burst, then brings it back.
+          // collision briefly blanks the Ratchet, then brings it back.
           if (collision_display_active)
             collision_blink_until = now + COLLISION_BLINK_TICKS;
           else
@@ -523,25 +538,8 @@ private:
             traffic[lane][i].active = true;
             traffic[lane][i].x = spawn_x;
 
-            const bool can_burst =
-              lane_rate[lane] == TRAFFIC_X2 ||
-              lane_rate[lane] == TRAFFIC_X3 ||
-              lane_rate[lane] == TRAFFIC_X4;
-
-            const int roll = random(100);
-
-            if (can_burst) {
-              if (roll < 55)
-                traffic[lane][i].modifier = MODIFIER_NOTE;
-              else if (roll < 85)
-                traffic[lane][i].modifier = MODIFIER_GATE;
-              else
-                traffic[lane][i].modifier = MODIFIER_BURST;
-            }
-            else {
-              traffic[lane][i].modifier =
-                roll < 55 ? MODIFIER_NOTE : MODIFIER_GATE;
-            }
+            traffic[lane][i].modifier =
+              RandomTrafficModifier(lane);
 
             break;
           }
@@ -565,30 +563,13 @@ private:
   void ResetTraffic() {
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
-      const bool can_burst =
-        lane_rate[lane] == TRAFFIC_X2 ||
-        lane_rate[lane] == TRAFFIC_X3 ||
-        lane_rate[lane] == TRAFFIC_X4;
-
       for (int i = 0; i < TRAFFIC_OBJECTS; ++i) {
         traffic[lane][i].active = (i == 0);
         traffic[lane][i].x =
           lane_reverse[lane] ? 64 : -TRAFFIC_WIDTH;
 
-        const int roll = random(100);
-
-        if (can_burst) {
-          if (roll < 60)
-            traffic[lane][i].modifier = MODIFIER_NOTE;
-          else if (roll < 85)
-            traffic[lane][i].modifier = MODIFIER_GATE;
-          else
-            traffic[lane][i].modifier = MODIFIER_BURST;
-        }
-        else {
-          traffic[lane][i].modifier =
-            roll < 55 ? MODIFIER_NOTE : MODIFIER_GATE;
-        }
+        traffic[lane][i].modifier =
+          RandomTrafficModifier(lane);
       }
     }
   }
@@ -611,7 +592,7 @@ private:
 
     const int y = FROG_Y[lane + 1] + 1;
 
-    if (traffic[lane][object].modifier == MODIFIER_BURST) {
+    if (traffic[lane][object].modifier == MODIFIER_RATCHET) {
       const int draw_x = max(x, 0);
       const int draw_right = min(x + TRAFFIC_WIDTH, 64);
       const int draw_width = draw_right - draw_x;
@@ -738,24 +719,18 @@ private:
     DrawFrog();
 
     // Runtime Ratchets display in the Safe Zone.
-    // Ratchets display replaces the normal modifier information while active.
-    if (collision_burst_zap || collision_ratchets_to_go > 0) {
+    // Queued: Ratchets remaining.
+    // Running: ZAP plus Ratchets remaining.
+    if (collision_ratchets_display > 0) {
       const int x = SafeZoneModifierX();
       const int y = SafeZoneModifierY();
 
       const int display_ratchets =
-        constrain(collision_ratchets_to_go, 0, 4);
+        constrain(collision_ratchets_display, 0, 4);
 
-      if (collision_burst_zap) {
-        const int total_bursts =
-          constrain(
-            collision_burst_count + collision_ratchets_to_go,
-            1,
-            4
-          );
-
+      if (collision_ratchet_zap) {
         gfxIcon(
-          max(0, x + 1 + ((total_bursts - 1) * 5) - 2),
+          max(0, x + 1 + ((display_ratchets - 1) * 5) - 2),
           y,
           ZAP_ICON
         );
@@ -764,8 +739,8 @@ private:
       for (int i = 0; i < display_ratchets; i++)
         gfxFrame(x + 1 + (i * 5), y + 3, 3, 3);
     }
-    if (modifier_icon &&
-        OC::CORE::ticks - modifier_display_tick <
+    else if (modifier_icon &&
+             OC::CORE::ticks - modifier_display_tick <
           HEMISPHERE_CURSOR_TICKS * 6 &&
         modifier_step >= 0) {
 
@@ -837,12 +812,8 @@ DrawStepCounter();
     const int note = GetFrogNote(step_index);
     const int height = constrain((note + 32) / 8, 1, 6);
 
-    if (!muted(step_index)) {
-      if (BurstEnabled(step_index))
-        gfxRect(x, y + 6 - height, 6, height);
-      else
-        gfxFrame(x, y + 6 - height, 6, height);
-    }
+    if (!muted(step_index))
+      gfxFrame(x, y + 6 - height, 6, height);
 
     // Active step indicator.
     if (step == step_index)
@@ -1025,7 +996,6 @@ DrawStepCounter();
         frog_x = 29;
         frog_x_reference = 29;
         modifier_icon = nullptr;
-        modifier_step = -1;
         modifier_value = 0;
         modifier_gate = false;
       }
@@ -1077,8 +1047,6 @@ DrawStepCounter();
     for (int s = 0; s < FROGSEQ_STEPS; ++s) {
 
       SetFrogNote(random(-24, 36), s);
-
-      SetBurst(s, false);
       SetMute(s, random(2));
     }
 
@@ -1095,12 +1063,6 @@ DrawStepCounter();
 
     SetLabel(midi_note_numbers[notenum]);
 
-
-  }
-
-  void ToggleSequenceBurst() {
-
-    ToggleBurst(cursor);
 
   }
 
@@ -1121,10 +1083,13 @@ public:
     collision_blink_until = 0;
     modifier_display_tick = 0;
     modifier_icon = nullptr;
-    modifier_clear_on_next_step = false;
-    collision_burst_armed = false;
-    collision_burst_count = 0;
-    collision_burst_zap = false;
+    collision_ratchet_armed = false;
+    collision_ratchets_to_go = 0;
+    collision_ratchets_display = 0;
+    collision_ratchet_count = 0;
+    collision_ratchet_countdown = 0;
+    collision_ratchet_zap = false;
+    collision_ratchet_spacing = 0;
 
     frog_x = 26;
     frog_y = FROG_Y[0];
@@ -1139,12 +1104,9 @@ public:
     for (int s = 0; s < FROGSEQ_STEPS; ++s) {
       sequence_notes[s] = 0;
       sequence_mutes[s] = false;
-      sequence_bursts[s] = false;
     }
 
     current_note = GetFrogNote(0);
-
-    click_tick = 0;
 
     step = 0;
     reset = true;
@@ -1183,64 +1145,61 @@ public:
     const bool clocked = Clock(0);
 
     if (clocked) {
-      // The previous Burst display ends at the new master-clock step.
-      // A Burst beginning on this same clock will turn ZAP back on.
-      collision_burst_zap = false;
+      // The previous Ratchet display ends at the new master-clock step.
+      // A Ratchet beginning on this same clock will turn ZAP back on.
+      collision_ratchet_zap = false;
     }
 
     MoveTraffic(clocked);
 
-    // Collision Burst ratchet.
+    // Collision Ratchet.
     //
     // The master clock is trigger #1. Remaining triggers are
-    // generated between master clocks using the Burst-style
-    // countdown timer. The sequence step does not advance
-    // during the ratchet.
-    if (collision_burst_armed) {
+    // generated between master clocks using the countdown timer.
+    // The sequence step does not advance during the Ratchet.
+    if (collision_ratchet_armed) {
 
-      const uint32_t burst_spacing = collision_burst_spacing;
+      const uint32_t ratchet_spacing = collision_ratchet_spacing;
 
       if (clocked) {
 
         AdvanceSequence();
 
-        collision_burst_count = 1;
-        collision_burst_zap = true;
+        collision_ratchet_count = 1;
+        collision_ratchet_zap = true;
 
-        int play_cv = MIDIQuantizer::CV(current_note + 36);
-        play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
-        Out(0, play_cv);
+        PlayCurrentNote();
         ClockOut(1);
 
         --collision_ratchets_to_go;
+        --collision_ratchets_display;
 
         if (collision_ratchets_to_go > 0) {
-          collision_burst_countdown = burst_spacing;
+          collision_ratchet_countdown = ratchet_spacing;
         }
         else {
-          collision_burst_armed = false;
+          collision_ratchet_armed = false;
         }
       }
-      else if (collision_burst_count > 0 &&
+      else if (collision_ratchet_count > 0 &&
                collision_ratchets_to_go > 0) {
 
-        if (collision_burst_countdown > 0)
-          --collision_burst_countdown;
+        if (collision_ratchet_countdown > 0)
+          --collision_ratchet_countdown;
 
-        if (collision_burst_countdown == 0) {
+        if (collision_ratchet_countdown == 0) {
 
-          int play_cv = MIDIQuantizer::CV(current_note + 36);
-          play_cv = HS::GetQuantEngine(qselect).Process(play_cv, 0, 0);
-          Out(0, play_cv);
+          PlayCurrentNote();
           ClockOut(1);
 
-          ++collision_burst_count;
+          ++collision_ratchet_count;
           --collision_ratchets_to_go;
+          --collision_ratchets_display;
 
           if (collision_ratchets_to_go > 0)
-            collision_burst_countdown = burst_spacing;
+            collision_ratchet_countdown = ratchet_spacing;
           else
-            collision_burst_armed = false;
+            collision_ratchet_armed = false;
         }
       }
     }
@@ -1425,7 +1384,6 @@ return;
           for (int s = 0; s < FROGSEQ_STEPS; ++s) {
             sequence_notes[s] = 0;
             sequence_mutes[s] = false;
-            sequence_bursts[s] = false;
           }
           sequence_length = FROGSEQ_STEPS;
           step = 0;
@@ -1477,15 +1435,6 @@ return;
         CancelEdit();
         cursor = sequence_length;
         return;
-      }
-
-      if (cursor >= NOTE_STEP_FIRST && cursor <= NOTE_STEP_LAST) {
-        if (OC::CORE::ticks - click_tick < HEMISPHERE_DOUBLE_CLICK_TIME) {
-          ToggleSequenceBurst();
-          click_tick = 0;
-          return;
-        }
-        click_tick = OC::CORE::ticks;
       }
 
       CursorToggle();
@@ -1653,8 +1602,7 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
       const uint8_t packed =
         note
-        | (sequence_mutes[s] ? 0x40 : 0)
-        | (sequence_bursts[s] ? 0x80 : 0);
+        | (sequence_mutes[s] ? 0x40 : 0);
 
       Pack(
         data,
@@ -1676,8 +1624,6 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
         constrain((packed & 0x3f) - 24, -24, 35);
       sequence_mutes[s] =
         (packed & 0x40) != 0;
-      sequence_bursts[s] =
-        (packed & 0x80) != 0;
     }
   }
 
@@ -1709,17 +1655,16 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     collision_display_until = 0;
     collision_blink_until = 0;
     modifier_icon = nullptr;
-    modifier_step = -1;
     modifier_value = 0;
     modifier_gate = false;
-    modifier_clear_on_next_step = false;
 
-    collision_burst_armed = false;
+    collision_ratchet_armed = false;
     collision_ratchets_to_go = 0;
-    collision_burst_count = 0;
-    collision_burst_countdown = 0;
-    collision_burst_zap = false;
-    collision_burst_spacing = 0;
+    collision_ratchets_display = 0;
+    collision_ratchet_count = 0;
+    collision_ratchet_countdown = 0;
+    collision_ratchet_zap = false;
+    collision_ratchet_spacing = 0;
 
     step = 0;
     reset = true;
@@ -1780,8 +1725,13 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
     LoadSequenceMemory(current_sequence);
     SaveRestoreSnapshot();
 
-    collision_burst_armed = false;
-    collision_burst_count = 0;
+    collision_ratchet_armed = false;
+    collision_ratchets_to_go = 0;
+    collision_ratchets_display = 0;
+    collision_ratchet_count = 0;
+    collision_ratchet_countdown = 0;
+    collision_ratchet_zap = false;
+    collision_ratchet_spacing = 0;
 
     for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
