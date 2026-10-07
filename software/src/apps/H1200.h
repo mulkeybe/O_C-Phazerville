@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "../src/tonnetz/tonnetz.h"
+//#include "../src/tonnetz/tonnetz.h"
 
 extern uint_fast8_t MENU_REDRAW;
 
