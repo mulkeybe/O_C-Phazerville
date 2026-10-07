@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "../OC_sequence_edit.h"
+//#include "../OC_sequence_edit.h"
 
 static constexpr uint8_t NUM_CHANNELS = 2;
 static constexpr uint8_t MULT_MAX = 26;    // max multiplier
