@@ -25,7 +25,7 @@
 // quadrature wavetable LFO by Olivier Gillet (see frames_poly_lfo_.h/cpp)
 
 #pragma once
-#include "../src/extern/frames_poly_lfo.h"
+//#include "../src/extern/frames_poly_lfo.h"
 
 enum POLYLFO_SETTINGS {
   POLYLFO_SETTING_COARSE,
