@@ -15,10 +15,10 @@ namespace menu = OC::menu;
 #include "Scenery.h"
 #include "ASR.h"
 #ifdef ENABLE_APP_H1200
-#include "H1200.h"
+//#include "H1200.h"
 #endif
 #ifdef ENABLE_APP_AUTOMATONNETZ
-#include "Automatonnetz.h"
+//#include "Automatonnetz.h"
 #endif
 #include "Sequins.h"
 #include "QQ.h"
@@ -37,7 +37,7 @@ namespace menu = OC::menu;
 //#include "TheDarkestTimeline.h"
 //#include "Enigma.h"
 #ifdef ENABLE_APP_NEURAL_NETWORK
-#include "NeuralNetwork.h"
+/#include "NeuralNetwork.h"
 #endif
 #include "ScaleEditor.h"
 #include "WaveformEditor.h"
