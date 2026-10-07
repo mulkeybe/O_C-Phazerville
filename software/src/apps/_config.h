@@ -12,7 +12,7 @@ namespace menu = OC::menu;
 #endif
 
 #include "Calibr8or.h"
-#include "Scenery.h"
+// #include "Scenery.h"
 #include "ASR.h"
 #ifdef ENABLE_APP_H1200
 //#include "H1200.h"
@@ -20,28 +20,28 @@ namespace menu = OC::menu;
 #ifdef ENABLE_APP_AUTOMATONNETZ
 //#include "Automatonnetz.h"
 #endif
-#include "Sequins.h"
-#include "QQ.h"
-#include "DQ.h"
+// #include "Sequins.h"
+// #include "QQ.h"
+// #include "DQ.h"
 //#include "Quadraturia.h"
-#include "Lorenz.h"
-#include "Piqued.h"
+// #include "Lorenz.h"
+// #include "Piqued.h"
 #include "BBGEN.h"
-#include "Viznutcracker.h"
+// #include "Viznutcracker.h"
 #include "Chords.h"
 #ifdef ENABLE_APP_REFERENCES
 #include "References.h"
 #endif
 // #include "Passencore.h"
 #include "CaptainMIDI.h"
-//#include "TheDarkestTimeline.h"
-//#include "Enigma.h"
+#include "TheDarkestTimeline.h"
+#include "Enigma.h"
 #ifdef ENABLE_APP_NEURAL_NETWORK
-/#include "NeuralNetwork.h"
+#include "NeuralNetwork.h"
 #endif
 #include "ScaleEditor.h"
 #include "WaveformEditor.h"
-#include "PongGame.h"
+// #include "PongGame.h"
 #include "Backup.h"
 #include "SETTINGS.h"
 
@@ -72,7 +72,7 @@ static AppContainer<void // this space intentionally left blank
   , AppCalibr8or
 #endif
 #ifdef ENABLE_APP_SCENES
-  , AppScenery
+//   , AppScenery
 #endif
 #ifdef ENABLE_APP_MIDI
   , AppCaptainMIDI
@@ -93,34 +93,34 @@ static AppContainer<void // this space intentionally left blank
   , AppASR
 #endif
 #ifdef ENABLE_APP_H1200
-  , AppH1200
+  // , AppH1200
 #endif
 #ifdef ENABLE_APP_AUTOMATONNETZ
-  , AppAutomatonnetz
+  // , AppAutomatonnetz
 #endif
 #ifdef ENABLE_APP_QUANTERMAIN
-  , AppQuadQuantizer
+//   , AppQuadQuantizer
 #endif
 #ifdef ENABLE_APP_METAQ
-  , AppDualQuantizer
+//   , AppDualQuantizer
 #endif
 #ifdef ENABLE_APP_POLYLFO
-  , AppPolyLfo
+  // , AppPolyLfo
 #endif
 #ifdef ENABLE_APP_LORENZ
-  , AppLorenzGenerator
+//   , AppLorenzGenerator
 #endif
 #ifdef ENABLE_APP_PIQUED
-  , AppQuadEnvelopeGenerator
+//   , AppQuadEnvelopeGenerator
 #endif
 #ifdef ENABLE_APP_SEQUINS
-  , AppDualSequencer
+//   , AppDualSequencer
 #endif
 #ifdef ENABLE_APP_BBGEN
   , AppQuadBouncingBalls
 #endif
 #ifdef ENABLE_APP_BYTEBEATGEN
-  , AppQuadByteBeats
+//   , AppQuadByteBeats
 #endif
 #ifdef ENABLE_APP_CHORDS
   , AppChordQuantizer
@@ -129,7 +129,7 @@ static AppContainer<void // this space intentionally left blank
   , AppReferences
 #endif
 #ifdef ENABLE_APP_PONG
-  , AppPong
+//   , AppPong
 #endif
   , AppScaleEditor
 #ifndef NO_HEMISPHERE
