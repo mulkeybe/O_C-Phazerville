@@ -23,7 +23,7 @@ namespace menu = OC::menu;
 #include "Sequins.h"
 #include "QQ.h"
 #include "DQ.h"
-#include "Quadraturia.h"
+//#include "Quadraturia.h"
 #include "Lorenz.h"
 #include "Piqued.h"
 #include "BBGEN.h"
@@ -34,8 +34,8 @@ namespace menu = OC::menu;
 #endif
 // #include "Passencore.h"
 #include "CaptainMIDI.h"
-#include "TheDarkestTimeline.h"
-#include "Enigma.h"
+//#include "TheDarkestTimeline.h"
+//#include "Enigma.h"
 #ifdef ENABLE_APP_NEURAL_NETWORK
 #include "NeuralNetwork.h"
 #endif
