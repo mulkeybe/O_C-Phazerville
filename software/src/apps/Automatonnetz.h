@@ -57,7 +57,7 @@
 
 #pragma once
 
-#include "../src/tonnetz/tonnetz.h"
+//#include "../src/tonnetz/tonnetz.h"
 
 #define FRACTIONAL_BITS 24
 #define CLOCK_STEP_RES (0x1 << FRACTIONAL_BITS)
