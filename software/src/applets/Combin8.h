@@ -47,7 +47,7 @@ public:
       int aux2 = sources[ch][1].In();
       int signal;
 
-      // SUM mode: sample and hold the complete summed input on the clock.
+      // SUM: Sample and hold the sum of the main input and unmuted AUX inputs.
       if (output_mode[ch] == MODE_SUM) {
         signal = main_cv;
         if (!aux_muted[ch][0]) signal += aux1;
@@ -55,7 +55,7 @@ public:
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = signal;
         signal = held_cv[ch];
-      // IN mode: sample and hold the main input while aux inputs remain live.
+      // IN: Sample and hold the main input while unmuted AUX inputs remain live.
       } else if (output_mode[ch] == MODE_IN) {
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = main_cv;
@@ -218,7 +218,9 @@ private:
   // Additional sources.
   CVInputMap sources[2][2];
 
-  // Output modes: normal sum, clocked sum/hold, or clocked main input with live aux inputs.
+  // NRM: Pass the main input and unmuted AUX inputs live.
+  // SUM: Sample and hold their sum on the clock.
+  // IN: Sample and hold the main input; keep unmuted AUX inputs live.
   enum OutputMode {
     MODE_NRM,
     MODE_SUM,
@@ -229,12 +231,24 @@ private:
   int held_cv[2] = {0, 0};
   bool aux_muted[2][2] = {{false, false}, {false, false}};
 
+  // Correct DAC icon offsets locally without changing shared CVInputMap behavior.
+  void PrintCombin8Source(CVInputMap &map) const {
+    if (map.source_type() == CVInputMap::TYPE_DAC && map.index() < 8) {
+      gfxPrintIcon(PARAM_MAP_ICONS + (9 + map.index()) * 8);
+      const int xpos = gfxGetPrintPosX() - 1;
+      const int ypos = gfxGetPrintPosY() + 2;
+      const int height = constrain(map.InRescaled(8), -8, 8);
+      gfxLine(xpos, ypos, xpos, ypos - height);
+    } else {
+      gfxPrint(map);
+    }
+  }
+
   void DrawInterface() {
     ForEachChannel(ch) {
-      const int ypos = 13 + 26 * ch;
+      const int ypos = 16 + 26 * ch;
       const int base_cursor = ch * 3;
 
-      // Output = main input.
       gfxPos(2, ypos);
       gfxStartCursor();
       if (output_mode[ch] == MODE_SUM) {
@@ -245,32 +259,27 @@ private:
       }
       gfxPrint("=");
 
-      // Main input.
       if (output_mode[ch] == MODE_IN) {
         gfxPrintIcon(CLOCK_ICON);
       } else {
-        gfxPrint(cvmap[ch + io_offset]);
+        PrintCombin8Source(cvmap[ch + io_offset]);
       }
 
-      // Highlight the OUT cursor when selected.
       gfxEndCursor(cursor == base_cursor, false, nullptr);
 
-      // Tighten spacing after the fixed input.
       gfxPos(gfxGetPrintPosX() - 2, gfxGetPrintPosY());
 
-      // AUX input 1.
       gfxPrint(" +");
       gfxStartCursor();
       if (aux_muted[ch][0]) {
         gfxPrint("X");
         gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
       } else {
-        gfxPrint(sources[ch][0]);
+        PrintCombin8Source(sources[ch][0]);
       }
       gfxEndCursor(cursor == base_cursor + 1, false,
                    EditMode() ? sources[ch][0].InputName() : nullptr);
 
-      // AUX input 2.
       gfxPos(gfxGetPrintPosX() - 2, gfxGetPrintPosY());
       gfxPrint(" +");
       gfxStartCursor();
@@ -278,7 +287,7 @@ private:
         gfxPrint("X");
         gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
       } else {
-        gfxPrint(sources[ch][1]);
+        PrintCombin8Source(sources[ch][1]);
       }
       gfxEndCursor(cursor == base_cursor + 2, false,
                    EditMode() ? sources[ch][1].InputName() : nullptr);
@@ -290,22 +299,24 @@ private:
     }
 
     if (cursor == CH1_OUT) {
-      SetLabel("OUT A");
+      SetLabel(output_mode[0] == MODE_SUM ? "SUM A" :
+               output_mode[0] == MODE_IN ? "IN A" : "NRM A");
       SetAux(true);
     } else if (cursor == CH1_AUX1) {
-      SetLabel(aux_muted[0][0] ? "MUTED " : "AUX A1");
+      SetLabel(aux_muted[0][0] ? "MUTED " : "AUX1 A");
       SetAux(true);
     } else if (cursor == CH1_AUX2) {
-      SetLabel(aux_muted[0][1] ? "MUTED " : "AUX A2");
+      SetLabel(aux_muted[0][1] ? "MUTED " : "AUX2 A");
       SetAux(true);
     } else if (cursor == CH2_OUT) {
-      SetLabel("OUT B");
+      SetLabel(output_mode[1] == MODE_SUM ? "SUM B" :
+               output_mode[1] == MODE_IN ? "IN B" : "NRM B");
       SetAux(true);
     } else if (cursor == CH2_AUX1) {
-      SetLabel(aux_muted[1][0] ? "MUTED " : "AUX B1");
+      SetLabel(aux_muted[1][0] ? "MUTED " : "AUX1 B");
       SetAux(true);
     } else if (cursor == CH2_AUX2) {
-      SetLabel(aux_muted[1][1] ? "MUTED " : "AUX B2");
+      SetLabel(aux_muted[1][1] ? "MUTED " : "AUX2 B");
       SetAux(true);
     }
   }
