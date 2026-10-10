@@ -1646,6 +1646,7 @@ void FLASHMEM FrogSeq::Start() {
     }
 
     current_note = GetFrogNote(0);
+    SaveRestoreSnapshot();
 
     step = 0;
     reset = true;
