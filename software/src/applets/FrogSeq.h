@@ -1552,8 +1552,39 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
 
 
 
-    LoadSequenceMemory(current_sequence);
-    SaveRestoreSnapshot();
+    // Load the selected sequence, or initialize and save C2 defaults.
+    if (!LoadSequenceMemory(current_sequence)) {
+      for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+        sequence_notes[s] = 0;
+        sequence_mutes[s] = false;
+      }
+      SaveSequenceMemory(current_sequence);
+    }
+
+    // Initialize Restore storage only if either slot is missing.
+    uint64_t restore_data = 0;
+    const bool have_restore_1 =
+      GetData(FROGSEQ_RESTORE_SLOT_1, restore_data);
+    const bool have_restore_2 =
+      GetData(FROGSEQ_RESTORE_SLOT_2, restore_data);
+
+    if (!have_restore_1 || !have_restore_2) {
+      // Save a C2, unmuted default snapshot, then reload the active sequence.
+      for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+        sequence_notes[s] = 0;
+        sequence_mutes[s] = false;
+      }
+      SaveRestoreSnapshot();
+
+      if (!LoadSequenceMemory(current_sequence)) {
+        for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+          sequence_notes[s] = 0;
+          sequence_mutes[s] = false;
+        }
+      }
+    }
+
+    current_note = GetFrogNote(0);
 
     collision_ratchet_armed = false;
     collision_ratchets_to_go = 0;
