@@ -1160,6 +1160,7 @@ public:
   void UnpackSequenceSteps(uint64_t data, int first_step);
 
   void SaveRestoreSnapshot();
+  bool HasRestoreSnapshot();
 
   void ClearCollisionState();
 
@@ -1526,6 +1527,14 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 }
 
 
+bool FLASHMEM FrogSeq::HasRestoreSnapshot() {
+    uint64_t first_half = 0;
+    uint64_t second_half = 0;
+
+    return GetData(FROGSEQ_RESTORE_SLOT_1, first_half) &&
+           GetData(FROGSEQ_RESTORE_SLOT_2, second_half);
+}
+
 void FLASHMEM FrogSeq::SaveRestoreSnapshot() {
     SetData(
       FROGSEQ_RESTORE_SLOT_1,
@@ -1552,8 +1561,9 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
 
 
 
-    LoadSequenceMemory(current_sequence);
-    SaveRestoreSnapshot();
+    if (LoadSequenceMemory(current_sequence)) {
+      SaveRestoreSnapshot();
+    }
 
     collision_ratchet_armed = false;
     collision_ratchets_to_go = 0;
@@ -1646,7 +1656,10 @@ void FLASHMEM FrogSeq::Start() {
     }
 
     current_note = GetFrogNote(0);
-    SaveRestoreSnapshot();
+
+    if (!HasRestoreSnapshot()) {
+      SaveRestoreSnapshot();
+    }
 
     step = 0;
     reset = true;
@@ -1723,17 +1736,17 @@ void FLASHMEM FrogSeq::ClearCollisionState() {
   }
 
 bool FLASHMEM FrogSeq::RestoreSequence() {
-    uint64_t data = 0;
+    uint64_t first_half = 0;
+    uint64_t second_half = 0;
 
-    if (!GetData(FROGSEQ_RESTORE_SLOT_1, data))
+    if (!GetData(FROGSEQ_RESTORE_SLOT_1, first_half))
       return false;
 
-    UnpackSequenceSteps(data, 0);
-
-    if (!GetData(FROGSEQ_RESTORE_SLOT_2, data))
+    if (!GetData(FROGSEQ_RESTORE_SLOT_2, second_half))
       return false;
 
-    UnpackSequenceSteps(data, 8);
+    UnpackSequenceSteps(first_half, 0);
+    UnpackSequenceSteps(second_half, 8);
 
     ClearCollisionState();
 
@@ -1757,17 +1770,17 @@ void FLASHMEM FrogSeq::SaveSequenceMemory(uint8_t sequence) {
   }
 
 bool FLASHMEM FrogSeq::LoadSequenceMemory(uint8_t sequence) {
-    uint64_t data = 0;
+    uint64_t first_half = 0;
+    uint64_t second_half = 0;
 
-    if (!GetData(FROGSEQ_DATA_START + sequence * 2, data))
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2, first_half))
       return false;
 
-    UnpackSequenceSteps(data, 0);
-
-    if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, second_half))
       return false;
 
-    UnpackSequenceSteps(data, 8);
+    UnpackSequenceSteps(first_half, 0);
+    UnpackSequenceSteps(second_half, 8);
 
     return true;
   }
