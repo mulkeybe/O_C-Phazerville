@@ -1753,20 +1753,26 @@ void FLASHMEM FrogSeq::ClearCollisionState() {
   }
 
 bool FLASHMEM FrogSeq::RestoreSequence() {
-    uint64_t data = 0;
+    uint64_t first = 0;
+    uint64_t second = 0;
 
-    if (!GetData(FROGSEQ_RESTORE_SLOT_1, data))
-      return false;
+    const bool have_first =
+      GetData(FROGSEQ_RESTORE_SLOT_1, first);
+    const bool have_second =
+      GetData(FROGSEQ_RESTORE_SLOT_2, second);
 
-    UnpackSequenceSteps(data, 0);
-
-    if (!GetData(FROGSEQ_RESTORE_SLOT_2, data))
-      return false;
-
-    UnpackSequenceSteps(data, 8);
+    if (!have_first || !have_second) {
+      for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+        sequence_notes[s] = 0;
+        sequence_mutes[s] = false;
+      }
+      SaveRestoreSnapshot();
+    } else {
+      UnpackSequenceSteps(first, 0);
+      UnpackSequenceSteps(second, 8);
+    }
 
     ClearCollisionState();
-
     step = 0;
     reset = true;
     current_note = GetFrogNote(0);
