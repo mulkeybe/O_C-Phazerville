@@ -1357,17 +1357,25 @@ void FLASHMEM FrogSeq::OnButtonPress() {
 
       if (sequence_slot_mode) {
         if (sequence_menu_mode == SEQUENCE_LOAD) {
-          if (LoadSequenceMemory(selected_sequence)) {
-            current_sequence = selected_sequence;
-
-            ClearCollisionState();
-
-            step = 0;
-            reset = true;
-            current_note = GetFrogNote(0);
-
-            SaveRestoreSnapshot();
+          if (!LoadSequenceMemory(selected_sequence)) {
+            // Empty or incomplete slot: initialize C2, unmuted defaults.
+            for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+              sequence_notes[s] = 0;
+              sequence_mutes[s] = false;
+            }
+            sequence_length = FROGSEQ_STEPS;
+            SaveSequenceMemory(selected_sequence);
           }
+
+          current_sequence = selected_sequence;
+
+          ClearCollisionState();
+
+          step = 0;
+          reset = true;
+          current_note = GetFrogNote(0);
+
+          SaveRestoreSnapshot();
         }
         else if (sequence_menu_mode == SEQUENCE_MOVE) {
           SaveSequenceMemory(selected_sequence);
@@ -1560,6 +1568,7 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
         sequence_mutes[s] = false;
       }
 
+      sequence_length = FROGSEQ_STEPS;
       SaveSequenceMemory(current_sequence);
       SaveRestoreSnapshot();
     } else {
