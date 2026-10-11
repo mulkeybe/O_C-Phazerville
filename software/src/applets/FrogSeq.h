@@ -1552,35 +1552,27 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
 
 
 
-    // Load the selected sequence, or initialize and save C2 defaults.
+    // Load the selected sequence. If it has no saved data, initialize
+    // both the sequence and Restore to the C2, unmuted defaults.
     if (!LoadSequenceMemory(current_sequence)) {
       for (int s = 0; s < FROGSEQ_STEPS; ++s) {
         sequence_notes[s] = 0;
         sequence_mutes[s] = false;
       }
+
       SaveSequenceMemory(current_sequence);
-    }
-
-    // Initialize Restore storage only if either slot is missing.
-    uint64_t restore_data = 0;
-    const bool have_restore_1 =
-      GetData(FROGSEQ_RESTORE_SLOT_1, restore_data);
-    const bool have_restore_2 =
-      GetData(FROGSEQ_RESTORE_SLOT_2, restore_data);
-
-    if (!have_restore_1 || !have_restore_2) {
-      // Save a C2, unmuted default snapshot, then reload the active sequence.
-      for (int s = 0; s < FROGSEQ_STEPS; ++s) {
-        sequence_notes[s] = 0;
-        sequence_mutes[s] = false;
-      }
       SaveRestoreSnapshot();
+    } else {
+      // Preserve existing Restore data. If it is missing, initialize it
+      // from the valid active sequence as a recovery case.
+      uint64_t restore_data = 0;
+      const bool have_restore_1 =
+        GetData(FROGSEQ_RESTORE_SLOT_1, restore_data);
+      const bool have_restore_2 =
+        GetData(FROGSEQ_RESTORE_SLOT_2, restore_data);
 
-      if (!LoadSequenceMemory(current_sequence)) {
-        for (int s = 0; s < FROGSEQ_STEPS; ++s) {
-          sequence_notes[s] = 0;
-          sequence_mutes[s] = false;
-        }
+      if (!have_restore_1 || !have_restore_2) {
+        SaveRestoreSnapshot();
       }
     }
 
@@ -1793,17 +1785,18 @@ void FLASHMEM FrogSeq::SaveSequenceMemory(uint8_t sequence) {
   }
 
 bool FLASHMEM FrogSeq::LoadSequenceMemory(uint8_t sequence) {
-    uint64_t data = 0;
+    uint64_t first = 0;
+    uint64_t second = 0;
 
-    if (!GetData(FROGSEQ_DATA_START + sequence * 2, data))
+    // Verify both halves exist before changing the live sequence.
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2, first))
       return false;
 
-    UnpackSequenceSteps(data, 0);
-
-    if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, data))
+    if (!GetData(FROGSEQ_DATA_START + sequence * 2 + 1, second))
       return false;
 
-    UnpackSequenceSteps(data, 8);
+    UnpackSequenceSteps(first, 0);
+    UnpackSequenceSteps(second, 8);
 
     return true;
   }
