@@ -145,15 +145,14 @@ private:
 
   enum SequenceMenuMode {
     SEQUENCE_LOAD = 0,
-    SEQUENCE_MOVE,
-    SEQUENCE_RESET
+    SEQUENCE_WRITE,
+    SEQUENCE_INIT
   };
 
   uint8_t sequence_menu_mode = SEQUENCE_LOAD;
-  bool sequence_reset_confirm = false;
-  bool sequence_reset_yes = false;
   bool sequence_slot_mode = false;
   uint8_t selected_sequence = 0;
+  bool sequence_init_unsaved = false;
 
   static constexpr int TRAFFIC_OBJECTS = 3;
   static constexpr int TRAFFIC_WIDTH = 10;
@@ -920,7 +919,7 @@ DrawStepCounter();
   }
 
   FLASHMEM void DrawNoteSequencerPage() {
-  SetAux(cursor >= 0 && (cursor <= sequence_length || sequence_menu || sequence_slot_mode || sequence_reset_confirm));
+  SetAux(cursor >= 0 && (cursor <= sequence_length || sequence_menu || sequence_slot_mode));
 
   for (int s = 0; s < sequence_length; ++s)
     DrawNoteSequencerStep(s);
@@ -958,10 +957,10 @@ DrawStepCounter();
 
     if (sequence_menu_mode == SEQUENCE_LOAD)
       SetLabel("Load");
-    else if (sequence_menu_mode == SEQUENCE_MOVE)
-      SetLabel("Move");
+    else if (sequence_menu_mode == SEQUENCE_WRITE)
+      SetLabel("Write");
     else
-      SetLabel("Reset");
+      SetLabel("Init");
 
   }
   else if (sequence_slot_mode) {
@@ -972,12 +971,9 @@ DrawStepCounter();
                "Load(%d)", selected_sequence + 1);
     else
       snprintf(label, sizeof(label),
-               "Move(%d)", selected_sequence + 1);
+               "Write(%d)", selected_sequence + 1);
 
     SetLabel(label);
-  }
-  else if (sequence_reset_confirm) {
-    SetLabel(sequence_reset_yes ? "Reset(Y)" : "Reset(N)");
   }
   else if (cursor == sequence_length) {
 
@@ -991,7 +987,7 @@ DrawStepCounter();
 
     gfxFrame(0, 15, 64, 22);
 
-    if (EditMode() || sequence_menu || sequence_slot_mode || sequence_reset_confirm)
+    if (EditMode() || sequence_menu || sequence_slot_mode)
 
       gfxInvert(1, 16, 62, 20);
 
@@ -1163,6 +1159,9 @@ public:
 
   void ClearCollisionState();
 
+
+  void InitializeSequenceDefaults();
+  void ResetSequencePlayback();
   bool RestoreSequence();
 
   void SaveSequenceMemory(uint8_t sequence);
@@ -1204,20 +1203,13 @@ return;
     }
 
     if (page == NOTE_SEQ_PAGE) {
-      if (sequence_reset_confirm) {
-
-        sequence_reset_yes = (direction > 0);
-        return;
-
-      }
-
       if (sequence_menu) {
 
         sequence_menu_mode = static_cast<SequenceMenuMode>(
           constrain(
             static_cast<int>(sequence_menu_mode) + direction,
             SEQUENCE_LOAD,
-            SEQUENCE_RESET
+            SEQUENCE_INIT
           )
         );
 
@@ -1318,34 +1310,18 @@ void FLASHMEM FrogSeq::OnButtonPress() {
 
     if (page == NOTE_SEQ_PAGE) {
 
-      if (sequence_reset_confirm) {
-        if (sequence_reset_yes) {
-          for (int s = 0; s < FROGSEQ_STEPS; ++s) {
-            sequence_notes[s] = 0;
-            sequence_mutes[s] = false;
-          }
-          sequence_length = FROGSEQ_STEPS;
-          ClearCollisionState();
-          step = 0;
-          reset = true;
-          current_note = GetFrogNote(0);
-          SaveSequenceMemory(current_sequence);
-        }
-
-        sequence_reset_confirm = false;
-        sequence_reset_yes = true;
-        sequence_menu_mode = SEQUENCE_LOAD;
-        selected_sequence = current_sequence;
-        CancelEdit();
-        cursor = sequence_length;
-        return;
-      }
-
       if (sequence_menu) {
-        if (sequence_menu_mode == SEQUENCE_RESET) {
+        if (sequence_menu_mode == SEQUENCE_INIT) {
           sequence_menu = false;
-          sequence_reset_confirm = true;
-          sequence_reset_yes = false;
+          sequence_init_unsaved = true;
+
+          InitializeSequenceDefaults();
+          ResetSequencePlayback();
+
+          sequence_menu_mode = SEQUENCE_LOAD;
+          selected_sequence = current_sequence;
+          CancelEdit();
+          cursor = sequence_length;
           return;
         }
 
@@ -1359,28 +1335,22 @@ void FLASHMEM FrogSeq::OnButtonPress() {
         if (sequence_menu_mode == SEQUENCE_LOAD) {
           if (!LoadSequenceMemory(selected_sequence)) {
             // Empty or incomplete slot: initialize C2, unmuted defaults.
-            for (int s = 0; s < FROGSEQ_STEPS; ++s) {
-              sequence_notes[s] = 0;
-              sequence_mutes[s] = false;
-            }
-            sequence_length = FROGSEQ_STEPS;
+            InitializeSequenceDefaults();
             SaveSequenceMemory(selected_sequence);
           }
 
           current_sequence = selected_sequence;
+          sequence_init_unsaved = false;
 
-          ClearCollisionState();
-
-          step = 0;
-          reset = true;
-          current_note = GetFrogNote(0);
+          ResetSequencePlayback();
 
           SaveRestoreSnapshot();
         }
-        else if (sequence_menu_mode == SEQUENCE_MOVE) {
+        else if (sequence_menu_mode == SEQUENCE_WRITE) {
           SaveSequenceMemory(selected_sequence);
           current_sequence = selected_sequence;
           SaveRestoreSnapshot();
+          sequence_init_unsaved = false;
         }
 
         sequence_slot_mode = false;
@@ -1447,12 +1417,10 @@ void FLASHMEM FrogSeq::AuxButton() {
       // AUX on Steps opens the sequence menu.
       if (cursor == sequence_length) {
 
-        if (sequence_menu || sequence_slot_mode || sequence_reset_confirm) {
+        if (sequence_menu || sequence_slot_mode) {
 
           sequence_menu = false;
           sequence_slot_mode = false;
-          sequence_reset_confirm = false;
-          sequence_reset_yes = false;
           sequence_menu_mode = SEQUENCE_LOAD;
           selected_sequence = current_sequence;
           SetLabel("Steps");
@@ -1471,12 +1439,10 @@ void FLASHMEM FrogSeq::AuxButton() {
       }
 
       // AUX cancels sequence selection.
-      if (sequence_menu || sequence_slot_mode || sequence_reset_confirm) {
+      if (sequence_menu || sequence_slot_mode) {
 
         sequence_menu = false;
         sequence_slot_mode = false;
-        sequence_reset_confirm = false;
-        sequence_reset_yes = false;
         sequence_menu_mode = SEQUENCE_LOAD;
         selected_sequence = current_sequence;
         SetLabel("Steps");
@@ -1527,7 +1493,9 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
 
 
-    SaveSequenceMemory(current_sequence);
+    if (!sequence_init_unsaved) {
+      SaveSequenceMemory(current_sequence);
+    }
 
     return data;
   
@@ -1535,19 +1503,15 @@ for (int lane = 0; lane < TRAFFIC_LANES; ++lane) {
 
 
 void FLASHMEM FrogSeq::SaveRestoreSnapshot() {
-    SetData(
-      FROGSEQ_RESTORE_SLOT_1,
-      PackSequenceSteps(0)
-    );
+    uint64_t first = PackSequenceSteps(0);
 
-    SetData(
-      FROGSEQ_RESTORE_SLOT_2,
-      PackSequenceSteps(8)
-    );
-  }
+    // Mark the Restore format in the unused upper four bits.
+    Pack(first, PackLocation{60, 4}, 0xA);
+    SetData(FROGSEQ_RESTORE_SLOT_1, first);
+    SetData(FROGSEQ_RESTORE_SLOT_2, PackSequenceSteps(8));
+}
 
 void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
-
     // Frog X is not persisted.
     frog_x = 26;
     current_sequence =
@@ -1556,9 +1520,6 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
         0,
         SAVED_SEQUENCES - 1
       );
-
-
-
 
     // Load the selected sequence. If it has no saved data, initialize
     // both the sequence and Restore to the C2, unmuted defaults.
@@ -1753,7 +1714,35 @@ void FLASHMEM FrogSeq::ClearCollisionState() {
     collision_ratchet_spacing = 0;
   }
 
+void FLASHMEM FrogSeq::InitializeSequenceDefaults() {
+    for (int s = 0; s < FROGSEQ_STEPS; ++s) {
+        sequence_notes[s] = 0;
+        sequence_mutes[s] = false;
+    }
+
+    sequence_length = FROGSEQ_STEPS;
+}
+
+void FLASHMEM FrogSeq::ResetSequencePlayback() {
+    ClearCollisionState();
+    step = 0;
+    reset = true;
+    current_note = GetFrogNote(0);
+}
+
+
 bool FLASHMEM FrogSeq::RestoreSequence() {
+    // Remember what the cursor represented before restoring the sequence.
+    const int previous_cursor = cursor;
+    const int previous_sequence_length = sequence_length;
+    const bool was_steps_cursor =
+      page == NOTE_SEQ_PAGE &&
+      previous_cursor == previous_sequence_length;
+    const bool was_note_cursor =
+      page == NOTE_SEQ_PAGE &&
+      previous_cursor >= NOTE_STEP_FIRST &&
+      previous_cursor < previous_sequence_length;
+
     uint64_t first = 0;
     uint64_t second = 0;
 
@@ -1762,24 +1751,47 @@ bool FLASHMEM FrogSeq::RestoreSequence() {
     const bool have_second =
       GetData(FROGSEQ_RESTORE_SLOT_2, second);
 
-    if (!have_first || !have_second) {
-      for (int s = 0; s < FROGSEQ_STEPS; ++s) {
-        sequence_notes[s] = 0;
-        sequence_mutes[s] = false;
+    const uint8_t format =
+      have_first ? Unpack(first, PackLocation{60, 4}) : 0;
+
+    const bool marked_format = have_first && format == 0xA;
+    const bool unmarked_current_format =
+      have_first && format == 0x0;
+
+    if (!have_first || !have_second ||
+        (!marked_format && !unmarked_current_format)) {
+      // Recover the baseline from the active saved sequence.
+      if (!LoadSequenceMemory(current_sequence)) {
+        InitializeSequenceDefaults();
       }
+
+      // Rebuild both Restore words in the current format.
       SaveRestoreSnapshot();
     } else {
       UnpackSequenceSteps(first, 0);
       UnpackSequenceSteps(second, 8);
+
+      // Migrate an unmarked current-format snapshot.
+      if (!marked_format) {
+        SaveRestoreSnapshot();
+      }
     }
 
-    ClearCollisionState();
-    step = 0;
-    reset = true;
-    current_note = GetFrogNote(0);
+    ResetSequencePlayback();
+
+    // Preserve the UI selection across Restore.
+    if (was_steps_cursor) {
+      cursor = sequence_length;
+    }
+    else if (was_note_cursor) {
+      cursor = min(previous_cursor, sequence_length - 1);
+    }
+
+    sequence_init_unsaved = false;
+
 
     return true;
-  }
+}
 
 void FLASHMEM FrogSeq::SaveSequenceMemory(uint8_t sequence) {
     SetData(
