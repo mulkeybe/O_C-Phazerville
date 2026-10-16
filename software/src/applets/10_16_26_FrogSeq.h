@@ -1,4 +1,4 @@
-// Copyright (c) 2026, Benjamin Alan Mulkey
+// Copyright (c) 2026, Benjamin Mulkey
 
 //
 
@@ -1521,8 +1521,8 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
         SAVED_SEQUENCES - 1
       );
 
-    // Load the selected sequence. If it has no saved data, initialize
-    // both the sequence and Restore to the C2, unmuted defaults.
+    // Load the selected sequence. If no saved data exists,
+    // initialize the sequence to the C2, unmuted defaults.
     if (!LoadSequenceMemory(current_sequence)) {
       for (int s = 0; s < FROGSEQ_STEPS; ++s) {
         sequence_notes[s] = 0;
@@ -1531,20 +1531,10 @@ void FLASHMEM FrogSeq::OnDataReceive(uint64_t data) {
 
       sequence_length = FROGSEQ_STEPS;
       SaveSequenceMemory(current_sequence);
-      SaveRestoreSnapshot();
-    } else {
-      // Preserve existing Restore data. If it is missing, initialize it
-      // from the valid active sequence as a recovery case.
-      uint64_t restore_data = 0;
-      const bool have_restore_1 =
-        GetData(FROGSEQ_RESTORE_SLOT_1, restore_data);
-      const bool have_restore_2 =
-        GetData(FROGSEQ_RESTORE_SLOT_2, restore_data);
-
-      if (!have_restore_1 || !have_restore_2) {
-        SaveRestoreSnapshot();
-      }
     }
+
+    // Boot always establishes the loaded sequence as the Restore baseline.
+    SaveRestoreSnapshot();
 
     current_note = GetFrogNote(0);
 
