@@ -1,4 +1,3 @@
-cat > ../.github/workflows/manual-build-full-phazerville.yml <<'YAML'
 name: Manual build full Phazerville
 
 on:
