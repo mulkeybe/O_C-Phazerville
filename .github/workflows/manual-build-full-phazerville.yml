@@ -46,6 +46,3 @@ jobs:
         path: |
           software/*.hex
           software/.pio/build/*/*.hex
-YAML
-
-git status --short
