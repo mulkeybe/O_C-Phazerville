@@ -49,9 +49,7 @@ public:
 
       // SUM: Sample and hold the sum of the main input and unmuted AUX inputs.
       if (output_mode[ch] == MODE_SUM) {
-        signal = main_cv;
-        if (!aux_muted[ch][0]) signal += aux1;
-        if (!aux_muted[ch][1]) signal += aux2;
+        signal = MixerInputSum(ch, main_cv, aux1, aux2);
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = signal;
         signal = held_cv[ch];
@@ -59,13 +57,9 @@ public:
       } else if (output_mode[ch] == MODE_IN) {
         if (Clock(ch)) StartADCLag(ch);
         if (EndOfADCLag(ch)) held_cv[ch] = main_cv;
-        signal = held_cv[ch];
-        if (!aux_muted[ch][0]) signal += aux1;
-        if (!aux_muted[ch][1]) signal += aux2;
+        signal = MixerInputSum(ch, held_cv[ch], aux1, aux2);
       } else {
-        signal = main_cv;
-        if (!aux_muted[ch][0]) signal += aux1;
-        if (!aux_muted[ch][1]) signal += aux2;
+        signal = MixerInputSum(ch, main_cv, aux1, aux2);
       }
 
       CONSTRAIN(signal, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
@@ -125,15 +119,11 @@ public:
 
     int ch = Channel();
     if (IsOutput()) {
-      if (direction > 0) {
-        output_mode[ch] = static_cast<OutputMode>(
-          (output_mode[ch] + 1) % 3
-        );
-      } else if (direction < 0) {
-        output_mode[ch] = static_cast<OutputMode>(
-          (output_mode[ch] + 2) % 3
-        );
-      }
+      int mode = static_cast<int>(output_mode[ch]);
+      mode = constrain(mode + (direction > 0 ? 1 : direction < 0 ? -1 : 0),
+                       static_cast<int>(MODE_NRM),
+                       static_cast<int>(MODE_IN));
+      output_mode[ch] = static_cast<OutputMode>(mode);
       return;
     }
 
@@ -215,6 +205,13 @@ private:
     return cursor % 3 == 2;
   }
 
+  int MixerInputSum(int ch, int main_cv, int aux1, int aux2) const {
+    int sum = main_cv;
+    if (!aux_muted[ch][0]) sum += aux1;
+    if (!aux_muted[ch][1]) sum += aux2;
+    return sum;
+  }
+
   // Additional sources.
   CVInputMap sources[2][2];
 
@@ -231,22 +228,28 @@ private:
   int held_cv[2] = {0, 0};
   bool aux_muted[2][2] = {{false, false}, {false, false}};
 
-  // Correct DAC icon offsets locally without changing shared CVInputMap behavior.
+  // Draw Combin8 source meters with a 10-pixel limit around the anchor.
   void PrintCombin8Source(CVInputMap &map) const {
-    if (map.source_type() == CVInputMap::TYPE_DAC && map.index() < 8) {
+    const bool is_dac =
+        map.source_type() == CVInputMap::TYPE_DAC && map.index() < 8;
+
+    if (is_dac) {
       gfxPrintIcon(PARAM_MAP_ICONS + (9 + map.index()) * 8);
-      const int xpos = gfxGetPrintPosX() - 1;
-      const int ypos = gfxGetPrintPosY() + 2;
-      const int height = constrain(map.InRescaled(8), -8, 8);
-      gfxLine(xpos, ypos, xpos, ypos - height);
     } else {
-      gfxPrint(map);
+      gfxPrintIcon(map.Icon());
     }
+
+    const int xpos = gfxGetPrintPosX() - 1;
+    const int icon_y = gfxGetPrintPosY();
+    const int ypos = icon_y + (is_dac ? 2 : 4);
+    const int height = constrain(map.InRescaled(9), -9, 9);
+    const int endpoint = constrain(ypos - height, ypos - 10, ypos + 10);
+    gfxLine(xpos, ypos, xpos, endpoint);
   }
 
   void DrawInterface() {
     ForEachChannel(ch) {
-      const int ypos = 16 + 26 * ch;
+      const int ypos = 16 + 26 * ch + (ch == 0 ? 2 : 1);
       const int base_cursor = ch * 3;
 
       gfxPos(2, ypos);
@@ -261,15 +264,22 @@ private:
 
       if (output_mode[ch] == MODE_IN) {
         gfxPrintIcon(CLOCK_ICON);
+        const int xpos = gfxGetPrintPosX() - 1;
+        const int ypos = gfxGetPrintPosY() + 4;
+        const int height = constrain(
+            Proportion(held_cv[ch], HEMISPHERE_MAX_INPUT_CV, 9), -9, 9);
+        const int endpoint = constrain(ypos - height, ypos - 10, ypos + 10);
+        gfxLine(xpos, ypos, xpos, endpoint);
       } else {
         PrintCombin8Source(cvmap[ch + io_offset]);
       }
 
       gfxEndCursor(cursor == base_cursor, false, nullptr);
 
-      gfxPos(gfxGetPrintPosX() - 2, gfxGetPrintPosY());
+      gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
 
-      gfxPrint(" +");
+      gfxPrint("+");
+      gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
       gfxStartCursor();
       if (aux_muted[ch][0]) {
         gfxPrint("X");
@@ -280,8 +290,9 @@ private:
       gfxEndCursor(cursor == base_cursor + 1, false,
                    EditMode() ? sources[ch][0].InputName() : nullptr);
 
-      gfxPos(gfxGetPrintPosX() - 2, gfxGetPrintPosY());
-      gfxPrint(" +");
+      gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
+      gfxPrint("+");
+      gfxPos(gfxGetPrintPosX() + 2, gfxGetPrintPosY());
       gfxStartCursor();
       if (aux_muted[ch][1]) {
         gfxPrint("X");
@@ -292,10 +303,14 @@ private:
       gfxEndCursor(cursor == base_cursor + 2, false,
                    EditMode() ? sources[ch][1].InputName() : nullptr);
 
-      DrawMeter(In(ch), ypos + 11, 1);
-      DrawMeter(sources[ch][0].In(), ypos + 13, 1);
-      DrawMeter(sources[ch][1].In(), ypos + 15, 1);
-      DrawMeter(ViewOut(ch), ypos + 17, 3);
+      int main_cv = output_mode[ch] == MODE_IN ? held_cv[ch] : In(ch);
+      int mixer_sum = MixerInputSum(
+          ch, main_cv, sources[ch][0].In(), sources[ch][1].In());
+      mixer_sum = constrain(
+          mixer_sum, HEMISPHERE_MIN_CV, HEMISPHERE_MAX_CV);
+
+      DrawMeter(mixer_sum, ypos + 12, 1);
+      DrawMeter(ViewOut(ch), ypos + 15, 3);
     }
 
     if (cursor == CH1_OUT) {
@@ -322,15 +337,13 @@ private:
   }
 
   void DrawMeter(int cv, int ypos, int height = 1) {
-
-
-  // Positive values extend bars from left side of screen to the right.
-  // Negative values go from right side to left.
-  const int max_length = 60;
-  int length = ProportionCV(abs(cv), max_length);
-  if (cv < 0)
-    gfxRect(max_length - length, ypos, length, height);
-  else
-    gfxRect(1, ypos, length, height);
+    // positive values extend bars from left side of screen to the right
+    // negative values go from right side to left
+    int max_length = 60;
+    int length = ProportionCV(abs(cv), max_length);
+    if (cv < 0)
+      gfxRect(max_length - length, ypos, length, height);
+    else
+      gfxRect(1, ypos, length, height);
   }
 };
