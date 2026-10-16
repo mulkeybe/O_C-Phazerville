@@ -1,7 +1,9 @@
 name: PlatformIO CI
 
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - 'software/**'
 
 jobs:
   build:
