@@ -1,13 +1,8 @@
+cat > ../.github/workflows/manual-build-full-phazerville.yml <<'YAML'
 name: Manual build full Phazerville
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to build'
-        required: true
-        default: 'main'
-        type: string
 
 jobs:
   build:
@@ -16,12 +11,11 @@ jobs:
     steps:
     - uses: actions/checkout@v6
       with:
-        ref: ${{ inputs.branch }}
         submodules: recursive
 
     - name: Setup env
       run: |
-        echo "OC_ARTIFACT_TAG=manual-${{ inputs.branch }}-$(git rev-parse --short HEAD)" | tr '/' '_' >> $GITHUB_ENV
+        echo "OC_ARTIFACT_TAG=${GITHUB_REF_NAME}-$(git rev-parse --short HEAD)" | tr '/' '_' >> $GITHUB_ENV
 
     - name: Cache PlatformIO
       uses: actions/cache@v5
@@ -40,16 +34,19 @@ jobs:
         pip3 install --upgrade pip
         pip3 install -r .github/workflows/requirements.txt
 
-    - name: Build full firmware
+    - name: Build firmware
       working-directory: software/
       run: |
         pio run
 
-    - name: Upload firmware artifacts
+    - name: Copy artifact
       uses: actions/upload-artifact@v7
       with:
-        name: o_C-full-${{ inputs.branch }}-${{ github.run_number }}
+        name: o_C-${{env.OC_ARTIFACT_TAG}}
         include-hidden-files: true
         path: |
           software/*.hex
           software/.pio/build/*/*.hex
+YAML
+
+git status --short
