@@ -179,7 +179,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
 #endif
     , DeclareApplet<EuclidO, 83, CAT_SEQUENCER>
     , DeclareApplet<EuclidX, 15, CAT_SEQUENCER>
-    , DeclareApplet<FrogSeq, 95, CAT_SEQUENCER>
+    , DeclareApplet<FrogSeq, 86, CAT_SEQUENCER>
 #ifdef PEWPEWPEW
     , DeclareApplet<GameOfLife, 22, CAT_MODULATOR>
 #endif
