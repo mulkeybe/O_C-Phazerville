@@ -25,7 +25,7 @@ namespace menu = OC::menu;
 // #include "DQ.h"
 //#include "Quadraturia.h"
 // #include "Lorenz.h"
-// #include "Piqued.h"
+#include "Piqued.h"
 #include "BBGEN.h"
 // #include "Viznutcracker.h"
 #include "Chords.h"
