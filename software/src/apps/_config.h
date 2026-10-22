@@ -111,7 +111,7 @@ static AppContainer<void // this space intentionally left blank
 //   , AppLorenzGenerator
 #endif
 #ifdef ENABLE_APP_PIQUED
-//   , AppQuadEnvelopeGenerator
+   , AppQuadEnvelopeGenerator
 #endif
 #ifdef ENABLE_APP_SEQUINS
 //   , AppDualSequencer
