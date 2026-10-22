@@ -43,7 +43,7 @@ using namespace HS;
 #include "Combin8.h"
 #include "FrogSeq.h"
 #include "Compare.h"
-#include "CVSeq.h"
+// #include "CVSeq.h"
 #include "DivSeq.h"
 #include "DivSeq10.h"
 #include "DrumMap.h"
@@ -63,7 +63,7 @@ using namespace HS;
 #include "EnsOscKey.h"
 #endif
 #include "EnvFollow.h"
-#include "EnvSeq.h"
+// #include "EnvSeq.h"
 #include "EuclidO.h"
 #include "EuclidX.h"
 #ifdef PEWPEWPEW
@@ -124,7 +124,7 @@ using namespace HS;
 #include "MarkoV.h"
 #include "MarkovPerc.h"
 #ifdef PEWPEWPEW
-#include "WTVCO.h"
+// #include "WTVCO.h"
 #endif
 #include "Xfader.h"
 #include "hMIDIIn.h"
@@ -158,7 +158,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
     , DeclareApplet<Compare, 30, CAT_UTILITY>
     , DeclareApplet<Cumulus, 5, CAT_LOGIC>
     , DeclareApplet<CVRecV2, 24, CAT_SEQUENCER>
-    , DeclareApplet<CVSeq, 92, CAT_SEQUENCER>
+    // , DeclareApplet<CVSeq, 92, CAT_SEQUENCER>
     , DeclareApplet<DivSeq, 68, CAT_SEQUENCER | CAT_CLOCKING>
     , DeclareApplet<DivSeq10, 80, CAT_SEQUENCER | CAT_CLOCKING>
     , DeclareApplet<DrLoFi, 16, CAT_OTHER>
@@ -176,7 +176,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
 #endif
     , DeclareApplet<EnvFollow, 42, CAT_UTILITY | CAT_MODULATOR>
 #ifdef __IMXRT1062__
-    , DeclareApplet<EnvSeq, 91, CAT_SEQUENCER>
+    // , DeclareApplet<EnvSeq, 91, CAT_SEQUENCER>
 #endif
     , DeclareApplet<EuclidO, 83, CAT_SEQUENCER>
     , DeclareApplet<EuclidX, 15, CAT_SEQUENCER>
@@ -246,7 +246,7 @@ constexpr Registry reg = Registry<HemisphereApplet, HS::APPLET_SLOTS
     , DeclareApplet<VectorMod, 53, CAT_MODULATOR> // awkward middle child
     , DeclareApplet<Voltage, 43, CAT_UTILITY>
 #ifdef PEWPEWPEW
-    , DeclareApplet<WTVCO, 67, CAT_OTHER>
+    // , DeclareApplet<WTVCO, 67, CAT_OTHER>
 #endif
     , DeclareApplet<Xfader, 33, CAT_UTILITY>
 >{};
