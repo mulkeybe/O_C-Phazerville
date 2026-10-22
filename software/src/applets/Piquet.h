@@ -130,6 +130,7 @@ public:
 
     enum Cursor : uint8_t {
       CURSOR_CHANNEL,
+      CURSOR_LENGTH,
       CURSOR_ENVELOPE,
       CURSOR_TYPE,
       CURSOR_LOOP_MODE,
@@ -198,6 +199,7 @@ public:
       uint8_t loop_mode;
       bool loop_enabled;
       bool inverted;
+      uint8_t length_index;
 
       Stage stage;
       int32_t stage_ticks;
@@ -223,6 +225,7 @@ public:
         loop_mode = LOOP_CONT;
         loop_enabled = true;
         inverted = false;
+        length_index = 0;
 
         stage = STAGE_IDLE;
         stage_ticks = 0;
@@ -414,12 +417,17 @@ private:
     int next_visible_cursor(int current, int direction, EnvType type) {
       if (current == CURSOR_CHANNEL) {
         parameter_navigation = false;
+        return direction > 0 ? CURSOR_LENGTH : CURSOR_CHANNEL;
+      }
+
+      if (current == CURSOR_LENGTH) {
+        parameter_navigation = false;
         return direction > 0 ? CURSOR_TYPE : CURSOR_CHANNEL;
       }
 
       if (current == CURSOR_TYPE) {
         parameter_navigation = false;
-        if (direction < 0) return CURSOR_CHANNEL;
+        if (direction < 0) return CURSOR_LENGTH;
         if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
           return CURSOR_LOOP_MODE;
         return cursor_for_stage_index(0, type, false);
@@ -528,7 +536,7 @@ private:
         if (c.cv_map == CVMAP_ATTACK || c.cv_map == CVMAP_ADR) {
           Modulate(attack, ch, 1, STAGE_MAX_VALUE);
         }
-        if (run_segment(c, HEMISPHERE_MAX_CV, StageTicks(attack))) {
+        if (run_segment(c, HEMISPHERE_MAX_CV, StageTicks(attack) * (1 << c.length_index))) {
           if (c.has_decay()) {
             set_stage(c, STAGE_DECAY);
           } else if (has_sustain_hold) {
@@ -560,7 +568,7 @@ private:
           target = Proportion(sustain_cv, STAGE_MAX_VALUE, HEMISPHERE_MAX_CV);
         }
 
-        if (run_segment(c, target, StageTicks(decay))) {
+        if (run_segment(c, target, StageTicks(decay) * (1 << c.length_index))) {
           if (hold_at_peak) {
             set_stage(c, STAGE_RELEASE);
           } else if (ad_envelope) {
@@ -591,7 +599,7 @@ private:
         if (c.cv_map == CVMAP_RELEASE || c.cv_map == CVMAP_ADR) {
           Modulate(release, ch, 1, STAGE_MAX_VALUE);
         }
-        if (run_segment(c, 0, StageTicks(release) * 2)) {
+        if (run_segment(c, 0, StageTicks(release) * 2 * (1 << c.length_index))) {
           set_stage(c, c.should_repeat() ? STAGE_ATTACK : STAGE_IDLE);
         }
       }
@@ -708,6 +716,7 @@ private:
       Pack(data, PackLocation {58,1}, c.loop_mode);
       Pack(data, PackLocation {59,1}, c.loop_enabled ? 1 : 0);
       Pack(data, PackLocation {60,1}, 1);
+      Pack(data, PackLocation {61,2}, c.length_index);
       return data;
     }
 
@@ -818,6 +827,9 @@ void FLASHMEM Piquet::OnEncoderMove(int direction) {
 
       Channel &c = channels[selected_channel];
       switch (cursor) {
+        case CURSOR_LENGTH:
+          c.length_index = constrain(c.length_index + direction, 0, 3);
+          break;
         case CURSOR_TYPE:
           c.type = constrain(c.type + direction, 0, ENV_TYPE_LAST - 1);
           break;
@@ -881,13 +893,25 @@ void FLASHMEM Piquet::DrawIndicators() {
 
         if (cursor == CURSOR_CHANNEL) {
           gfxIcon(8, 22, LEFT_ICON);
+        } else if (cursor == CURSOR_LENGTH) {
+          gfxIcon(30, 22, RIGHT_ICON);
         }
       }
     }
 
 void FLASHMEM Piquet::DrawParamRow() {
-      if (cursor == CURSOR_CHANNEL) return;
       Channel &c = channels[selected_channel];
+
+      if (cursor == CURSOR_CHANNEL || cursor == CURSOR_LENGTH) {
+        static const char* length_names[] = {"x1", "x2", "x4", "x8"};
+        gfxIcon(40, 22, ENV_ICON);
+        gfxPrint(49, 22, length_names[constrain(c.length_index, 0, 3)]);
+        if (cursor == CURSOR_LENGTH && EditMode())
+          gfxCursor(49, 31, 12, 9, cursor_label());
+        return;
+      }
+
+      if (cursor == CURSOR_CHANNEL) return;
 
       if (cursor >= CURSOR_ATTACK_SHAPE) {
         const char *label = "";
@@ -1220,7 +1244,7 @@ int FLASHMEM Piquet::cursor_value_width(const Channel &c) const {
 
 const char* FLASHMEM Piquet::cursor_label() const {
       static const char* labels[CURSOR_LAST] = {
-        "Channel", "Envelope", "EnvType", "LoopMode",
+        "Channel", "Length", "Envelope", "EnvType", "LoopMode",
         "Attack", "Decay", "Sustain", "Release",
         "AttShape", "DcyShape", "RelShape",
         "Delay Mode", "Delay", "CV Map", "Level", "Invert"
@@ -1333,6 +1357,7 @@ void FLASHMEM Piquet::unpack_channel(Channel &c, uint64_t data) {
       c.cv_map = constrain(Unpack(data, PackLocation {46,3}), 0, CVMAP_LAST - 1);
       c.level = constrain(Unpack(data, PackLocation {49,8}), 0, 255);
       c.inverted = Unpack(data, PackLocation {57,1});
+      c.length_index = constrain(Unpack(data, PackLocation {61,2}), 0, 3);
       if (Unpack(data, PackLocation {60,1})) {
         c.loop_mode = constrain(
           Unpack(data, PackLocation {58,1}), 0, LOOP_MODE_LAST - 1);
