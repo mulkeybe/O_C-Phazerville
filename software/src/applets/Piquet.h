@@ -676,12 +676,17 @@ private:
       return false;
     }
 
-    int apply_level_and_polarity(const Channel &c, int cv_in) {
-      int out = simfloat2int(c.amplitude);
+    int effective_level(const Channel &c, int cv_in) {
       int level = c.level;
       if (c.cv_map == CVMAP_LEVEL) {
         level = constrain(level + Proportion(cv_in, HEMISPHERE_MAX_INPUT_CV, STAGE_MAX_VALUE / 2), 0, 255);
       }
+      return level;
+    }
+
+    int apply_level_and_polarity(const Channel &c, int cv_in) {
+      int out = simfloat2int(c.amplitude);
+      const int level = effective_level(c, cv_in);
       out = Proportion(out, HEMISPHERE_MAX_CV, Proportion(level, 255, HEMISPHERE_MAX_CV));
       if (c.inverted) out = HEMISPHERE_MAX_CV - out;
       return constrain(out, 0, HEMISPHERE_MAX_CV);
@@ -941,7 +946,7 @@ void FLASHMEM Piquet::DrawParamRow() {
           }
           gfxPrint("s");
         } else if (cursor == CURSOR_LEVEL) {
-          gfxPrint(value_x, 22, Proportion(c.level, 255, 100));
+          gfxPrint(value_x, 22, Proportion(effective_level(c, DetentedIn(selected_channel)), 255, 100));
           gfxPrint("%");
         } else if (value) {
           gfxPrint(value_x, 22, value);
@@ -1074,8 +1079,9 @@ void FLASHMEM Piquet::draw_curve_segment(int x, int x2, int start_level, int end
       }
 
       if (x2 <= x) {
-        const int y = y_for_level(end_level);
-        gfxLine(x, y, x2, y, draw);
+        const int y1 = y_for_level(start_level);
+        const int y2 = y_for_level(end_level);
+        gfxLine(x, y1, x, y2, draw);
         return;
       }
 
