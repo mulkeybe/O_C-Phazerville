@@ -766,13 +766,12 @@ void Piquet::Controller() {
         const int cv_in = DetentedIn(ch);
         const bool gate = read_gate_source(c.trigger_source);
         const bool clock_trigger = Clock(c.trigger_source);
-        const bool gate_rise = gate && !c.gate_prev;
         const bool gate_fall = !gate && c.gate_prev;
         c.gate_prev = gate;
 
         if (c.is_looping()) {
           if (c.loop_mode == LOOP_CONT) {
-            if (gate_rise) c.loop_enabled = !c.loop_enabled;
+            if (clock_trigger) c.loop_enabled = !c.loop_enabled;
           } else {
             c.loop_enabled = gate;
           }
