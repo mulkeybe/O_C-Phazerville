@@ -273,6 +273,7 @@ public:
 
 
     void View();
+    void DrawFullScreen() override;
 
     void OnEncoderMove(int direction);
 
@@ -320,6 +321,8 @@ protected:
 
 private:
     int selected_channel = 0;
+    int envelope_drawing_channel = 0;
+    int drawing_x_offset = 0;
     int cursor = CURSOR_CHANNEL;
     bool parameter_navigation = false;
     Channel channels[NUM_CHANNELS];
@@ -732,7 +735,9 @@ private:
 
     void DrawIndicators();
 
-    void DrawParamRow();
+    // Draw the parameter row at a horizontal offset. The default of zero
+    // preserves the normal Hemisphere layout.
+    void DrawParamRow(int x_offset = 0);
 
     const char* cursor_display_label() const;
 
@@ -742,7 +747,7 @@ private:
 
     const char* cursor_label() const;
 
-    void DrawEnvelope();
+    void DrawEnvelope(int channel, int x_offset);
 
     void draw_curve_segment(int x, int x2, int start_level,
                             int end_level, uint8_t shape, bool draw,
@@ -805,11 +810,56 @@ void FLASHMEM Piquet::View() {
           cursor == CURSOR_RELEASE_SHAPE) SetLabel(cursor_label());
       else SetLabel("");
       DrawIndicators();
-      DrawEnvelope();
+      DrawEnvelope(selected_channel, 0);
       if (cursor == CURSOR_TYPE) gfxFrame(0, 31, 64, 32);
       DrawParamRow();
       SetAux(true);
     }
+
+// Draw both envelopes side by side, with the selected channel's controls
+// and parameter row kept on that channel's side of the fullscreen display.
+void FLASHMEM Piquet::DrawFullScreen() {
+  // Draw channel A on the left and channel B on the right.
+  const int x_offset = -gfx_offset;
+  DrawEnvelope(0, x_offset);
+  DrawEnvelope(1, 64 + x_offset);
+
+  // Draw each output meter at its outside edge, growing toward the center.
+  for (int ch = 0; ch < NUM_CHANNELS; ++ch) {
+    int w = constrain(
+      Proportion(ViewOut(ch), HEMISPHERE_MAX_CV, 62), 0, 62);
+    int x = ((ch == 0) ? 0 : 128 - w) + x_offset;
+    gfxRect(x, 15, w, 2);
+  }
+
+  // Keep both channel labels visible, with a box around the selected A/B.
+  for (int ch = 0; ch < NUM_CHANNELS; ++ch) {
+    const int channel_x = ch * 64 + x_offset;
+    gfxPrint(channel_x, 22, OutputLabel(ch));
+    if (ch == selected_channel &&
+        cursor == CURSOR_CHANNEL && EditMode()) {
+      gfxFrame(channel_x, 20, 8, 11);
+    } else {
+      gfxInvert(channel_x, 21, 7, 9);
+    }
+  }
+
+  // Keep the existing navigation and parameter editing layout.
+  const int channel_x = selected_channel * 64 + x_offset;
+  if (cursor == CURSOR_CHANNEL) {
+    gfxIcon(channel_x + 8, 22, LEFT_ICON);
+  } else if (cursor == CURSOR_LENGTH) {
+    gfxIcon(channel_x + 30, 22, RIGHT_ICON);
+  }
+
+  if (cursor == CURSOR_TYPE) {
+    gfxFrame(channel_x, 31, 64, 32);
+  }
+
+  DrawParamRow(selected_channel * 64 + x_offset);
+
+  SetAux(true);
+}
 
 void FLASHMEM Piquet::OnEncoderMove(int direction) {
       if (!EditMode()) {
@@ -898,15 +948,16 @@ void FLASHMEM Piquet::DrawIndicators() {
       }
     }
 
-void FLASHMEM Piquet::DrawParamRow() {
+// Apply the offset to parameter text, icons, and the edit cursor.
+void FLASHMEM Piquet::DrawParamRow(int x_offset) {
       Channel &c = channels[selected_channel];
 
       if (cursor == CURSOR_CHANNEL || cursor == CURSOR_LENGTH) {
         static const char* length_names[] = {"x1", "x2", "x4", "x8"};
-        gfxIcon(40, 22, ENV_ICON);
-        gfxPrint(49, 22, length_names[constrain(c.length_index, 0, 3)]);
+        gfxIcon(40 + x_offset, 22, ENV_ICON);
+        gfxPrint(49 + x_offset, 22, length_names[constrain(c.length_index, 0, 3)]);
         if (cursor == CURSOR_LENGTH && EditMode())
-          gfxCursor(49, 31, 12, 9, cursor_label());
+          gfxCursor(49 + x_offset, 31, 12, 9, cursor_label());
         return;
       }
 
@@ -953,8 +1004,8 @@ void FLASHMEM Piquet::DrawParamRow() {
             break;
         }
 
-        gfxPrint(9, 22, label);
-        value_x = 9 + static_cast<int>(strlen(label)) * 6;
+        gfxPrint(9 + x_offset, 22, label);
+        value_x = x_offset + 9 + static_cast<int>(strlen(label)) * 6;
 
         if (cursor == CURSOR_DELAY) {
           if (c.delay_index < 100) {
@@ -978,11 +1029,11 @@ void FLASHMEM Piquet::DrawParamRow() {
         if (cursor == CURSOR_ATTACK_SHAPE ||
             cursor == CURSOR_DECAY_SHAPE ||
             cursor == CURSOR_RELEASE_SHAPE) {
-          value_width = min(static_cast<int>(strlen(value)) * 6, 64 - value_x);
+          value_width = min(static_cast<int>(strlen(value)) * 6, 64 - (value_x - x_offset));
         } else if (cursor == CURSOR_DELAY) {
           value_width = c.delay_index < 100 ? 24 : 24;
         } else {
-          value_width = min(cursor_value_width(c), 64 - value_x);
+          value_width = min(cursor_value_width(c), 64 - (value_x - x_offset));
         }
 
         if (EditMode()) {
@@ -992,33 +1043,39 @@ void FLASHMEM Piquet::DrawParamRow() {
       }
 
       switch (cursor) {
-        case CURSOR_TYPE:
-          gfxPrint(9, 22, type_name(c.type));
+        case CURSOR_TYPE: {
+          const char* value = type_name(c.type);
+          const int value_x = 9 + x_offset;
+          gfxPrint(value_x, 22, value);
+          if (EditMode()) {
+            gfxInvert(value_x, 21, strlen(value) * 6, 9);
+          }
           break;
+        }
         case CURSOR_LOOP_MODE: {
           const char* loop_text = c.loop_mode == LOOP_GATE ? "Gate" : "Cont";
-          gfxIcon(9, 22, LOOP_ICON);
-          gfxPrint(19, 22, ":");
-          gfxPrint(27, 22, loop_text);
-          if (EditMode()) gfxCursor(27, 31, 24, 9, cursor_label());
+          gfxIcon(9 + x_offset, 22, LOOP_ICON);
+          gfxPrint(19 + x_offset, 22, ":");
+          gfxPrint(27 + x_offset, 22, loop_text);
+          if (EditMode()) gfxCursor(27 + x_offset, 31, 24, 9, cursor_label());
           break;
         }
         case CURSOR_ATTACK:
-          gfxPrint(9, 22, StageTicks(c.stage_value[STAGE_ATTACK]) / 17);
+          gfxPrint(9 + x_offset, 22, StageTicks(c.stage_value[STAGE_ATTACK]) / 17);
           gfxPrint("ms");
           break;
         case CURSOR_DECAY:
-          gfxPrint(9, 22, StageTicks(c.stage_value[STAGE_DECAY]) / 17);
+          gfxPrint(9 + x_offset, 22, StageTicks(c.stage_value[STAGE_DECAY]) / 17);
           gfxPrint("ms");
           break;
         case CURSOR_SUSTAIN:
-          gfxPrint(9, 22,
+          gfxPrint(9 + x_offset, 22,
                    Proportion(c.stage_value[STAGE_SUSTAIN],
                               STAGE_MAX_VALUE, 100));
           gfxPrint("%");
           break;
         case CURSOR_RELEASE:
-          gfxPrint(9, 22,
+          gfxPrint(9 + x_offset, 22,
                    (StageTicks(c.stage_value[STAGE_RELEASE]) * 2) / 17);
           gfxPrint("ms");
           break;
@@ -1027,12 +1084,14 @@ void FLASHMEM Piquet::DrawParamRow() {
       }
 
       if (cursor >= CURSOR_ATTACK && cursor != CURSOR_LOOP_MODE && EditMode()) {
-        gfxCursor(9, 31, cursor_value_width(c), 9, cursor_label());
+        gfxCursor(9 + x_offset, 31, cursor_value_width(c), 9, cursor_label());
       }
     }
 
-void FLASHMEM Piquet::DrawEnvelope() {
-      Channel &c = channels[selected_channel];
+void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset) {
+      envelope_drawing_channel = channel;
+      drawing_x_offset = x_offset;
+      Channel &c = channels[channel];
 
       int attack = c.stage_value[STAGE_ATTACK];
       int decay = c.stage_value[STAGE_DECAY];
@@ -1040,16 +1099,16 @@ void FLASHMEM Piquet::DrawEnvelope() {
       int release = c.stage_value[STAGE_RELEASE];
 
       if (c.cv_map == CVMAP_ATTACK || c.cv_map == CVMAP_ADR) {
-        Modulate(attack, selected_channel, 1, STAGE_MAX_VALUE);
+        Modulate(attack, channel, 1, STAGE_MAX_VALUE);
       }
       if (c.cv_map == CVMAP_DECAY || c.cv_map == CVMAP_ADR) {
-        Modulate(decay, selected_channel, 1, STAGE_MAX_VALUE);
+        Modulate(decay, channel, 1, STAGE_MAX_VALUE);
       }
       if (c.cv_map == CVMAP_SUSTAIN) {
-        Modulate(sustain, selected_channel, 0, STAGE_MAX_VALUE);
+        Modulate(sustain, channel, 0, STAGE_MAX_VALUE);
       }
       if (c.cv_map == CVMAP_RELEASE || c.cv_map == CVMAP_ADR) {
-        Modulate(release, selected_channel, 1, STAGE_MAX_VALUE);
+        Modulate(release, channel, 1, STAGE_MAX_VALUE);
       }
 
       const bool has_decay = c.has_decay();
@@ -1074,8 +1133,8 @@ void FLASHMEM Piquet::DrawEnvelope() {
       if (has_sustain) {
         if (!has_decay) {
           const int ys = Proportion(sustain, STAGE_MAX_VALUE, DISPLAY_HEIGHT);
-          gfxLine(x, BottomAlign(DISPLAY_HEIGHT),
-                  x, BottomAlign(ys), true);
+          gfxLine(x + drawing_x_offset, BottomAlign(DISPLAY_HEIGHT),
+                  x + drawing_x_offset, BottomAlign(ys), true);
         }
         x = draw_sustain(c, sustain, x, length);
       }
@@ -1084,9 +1143,12 @@ void FLASHMEM Piquet::DrawEnvelope() {
         const int release_start = has_sustain ? sustain : STAGE_MAX_VALUE;
         draw_release(c, release_start, release, x, length);
       }
+      drawing_x_offset = 0;
     }
 
 void FLASHMEM Piquet::draw_curve_segment(int x, int x2, int start_level, int end_level, uint8_t shape, bool draw, int y_offset) {
+      x += drawing_x_offset;
+      x2 += drawing_x_offset;
       auto y_for_level = [y_offset](int level) {
         return BottomAlign(
           Proportion(level, STAGE_MAX_VALUE, DISPLAY_HEIGHT)) + y_offset;
@@ -1141,7 +1203,7 @@ void FLASHMEM Piquet::draw_stage_highlight(int x, int x2, int start_level, int e
 
 int FLASHMEM Piquet::draw_attack(const Channel &c, int attack, int x, int length) {
       const int x2 = x + Proportion(attack, length, 62);
-      const bool selected = cursor == CURSOR_ATTACK;
+      const bool selected = envelope_drawing_channel == selected_channel && cursor == CURSOR_ATTACK;
       draw_curve_segment(
         x, x2, 0, STAGE_MAX_VALUE, c.attack_shape, !selected);
       if (selected) {
@@ -1152,7 +1214,7 @@ int FLASHMEM Piquet::draw_attack(const Channel &c, int attack, int x, int length
 
 int FLASHMEM Piquet::draw_decay(const Channel &c, int decay, int sustain, int x, int length) {
       const int x2 = x + Proportion(decay, length, 62);
-      const bool selected = cursor == CURSOR_DECAY;
+      const bool selected = envelope_drawing_channel == selected_channel && cursor == CURSOR_DECAY;
       draw_curve_segment(
         x, x2, STAGE_MAX_VALUE, sustain, c.decay_shape, !selected);
       if (selected) {
@@ -1165,9 +1227,9 @@ int FLASHMEM Piquet::draw_sustain(const Channel &c, int sustain, int x, int leng
       const int x2 = x + Proportion(36, length, 62);
       const int ys = Proportion(sustain, STAGE_MAX_VALUE, DISPLAY_HEIGHT);
       const int y = BottomAlign(ys);
-      const bool selected = cursor == CURSOR_SUSTAIN;
+      const bool selected = envelope_drawing_channel == selected_channel && cursor == CURSOR_SUSTAIN;
       if (!selected) {
-        gfxLine(x, y, x2, y, true);
+        gfxLine(x + drawing_x_offset, y, x2 + drawing_x_offset, y, true);
       } else {
         draw_stage_highlight(x, x2, sustain, sustain, 0);
       }
@@ -1176,7 +1238,7 @@ int FLASHMEM Piquet::draw_sustain(const Channel &c, int sustain, int x, int leng
 
 int FLASHMEM Piquet::draw_release(const Channel &c, int sustain, int release, int x, int length) {
       const int x2 = x + Proportion(release, length, 62);
-      const bool selected = cursor == CURSOR_RELEASE;
+      const bool selected = envelope_drawing_channel == selected_channel && cursor == CURSOR_RELEASE;
       draw_curve_segment(
         x, x2, sustain, 0, c.release_shape, !selected);
       if (selected) {
