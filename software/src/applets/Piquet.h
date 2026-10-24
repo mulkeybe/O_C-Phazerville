@@ -425,21 +425,25 @@ private:
 
       if (current == CURSOR_TYPE) {
         parameter_navigation = false;
-        return direction < 0 ? CURSOR_CHANNEL : CURSOR_LENGTH;
+        if (direction < 0) return CURSOR_CHANNEL;
+        if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
+          return CURSOR_LOOP_MODE;
+        return CURSOR_LENGTH;
       }
 
       if (current == CURSOR_LENGTH) {
         parameter_navigation = false;
-        if (direction < 0) return CURSOR_TYPE;
-        if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
-          return CURSOR_LOOP_MODE;
+        if (direction < 0) {
+          if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
+            return CURSOR_LOOP_MODE;
+          return CURSOR_TYPE;
+        }
         return cursor_for_stage_index(0, type, false);
       }
 
       if (current == CURSOR_LOOP_MODE) {
         parameter_navigation = false;
-        return direction < 0 ? CURSOR_TYPE
-                             : cursor_for_stage_index(0, type, false);
+        return direction < 0 ? CURSOR_TYPE : CURSOR_LENGTH;
       }
 
       if (current == CURSOR_ENVELOPE) {
@@ -810,7 +814,8 @@ void FLASHMEM Piquet::View() {
       else SetLabel("");
       DrawIndicators();
       DrawEnvelope(selected_channel, 0);
-      if (cursor == CURSOR_TYPE) gfxFrame(0, 31, 64, 32);
+      if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE)
+        gfxFrame(0, 31, 64, 32);
       DrawParamRow();
       SetAux(true);
     }
@@ -851,7 +856,7 @@ void FLASHMEM Piquet::DrawFullScreen() {
     gfxIcon(channel_x + 30, 22, RIGHT_ICON);
   }
 
-  if (cursor == CURSOR_TYPE) {
+  if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE) {
     gfxFrame(channel_x, 31, 64, 32);
   }
 
@@ -952,19 +957,25 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
       Channel &c = channels[selected_channel];
 
       if (cursor == CURSOR_CHANNEL ||
-          cursor == CURSOR_TYPE || cursor == CURSOR_LENGTH) {
+          cursor == CURSOR_TYPE || cursor == CURSOR_LENGTH ||
+          cursor == CURSOR_LOOP_MODE) {
         if (cursor == CURSOR_TYPE) {
           const char* value = type_name(c.type);
           const int value_x = 9 + x_offset;
           gfxPrint(value_x, 22, value);
           if (EditMode()) gfxInvert(value_x, 21, strlen(value) * 6, 9);
+        } else if (cursor == CURSOR_LOOP_MODE) {
+          const char* value = c.loop_mode == LOOP_GATE ? "GTD" : "CON";
+          gfxIcon(9 + x_offset, 22, LOOP_ICON);
+          gfxPrint(19 + x_offset, 22, value);
+          if (EditMode()) gfxInvert(19 + x_offset, 21, strlen(value) * 6, 9);
         }
 
         static const char* length_names[] = {"x1", "x2", "x4", "x8"};
-        gfxIcon(40 + x_offset, 22, ENV_ICON);
-        gfxPrint(49 + x_offset, 22, length_names[constrain(c.length_index, 0, 3)]);
+        gfxIcon(41 + x_offset, 22, ENV_ICON);
+        gfxPrint(50 + x_offset, 22, length_names[constrain(c.length_index, 0, 3)]);
         if (cursor == CURSOR_LENGTH && EditMode())
-          gfxCursor(49 + x_offset, 31, 12, 9, cursor_label());
+          gfxCursor(50 + x_offset, 31, 12, 9, cursor_label());
         return;
       }
 
@@ -1049,11 +1060,10 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
 
       switch (cursor) {
         case CURSOR_LOOP_MODE: {
-          const char* loop_text = c.loop_mode == LOOP_GATE ? "Gate" : "Cont";
+          const char* loop_text = c.loop_mode == LOOP_GATE ? "GTD" : "CON";
           gfxIcon(9 + x_offset, 22, LOOP_ICON);
-          gfxPrint(19 + x_offset, 22, ":");
-          gfxPrint(27 + x_offset, 22, loop_text);
-          if (EditMode()) gfxCursor(27 + x_offset, 31, 24, 9, cursor_label());
+          gfxPrint(19 + x_offset, 22, loop_text);
+          if (EditMode()) gfxCursor(19 + x_offset, 31, 18, 9, cursor_label());
           break;
         }
         case CURSOR_ATTACK:
@@ -1269,7 +1279,7 @@ int FLASHMEM Piquet::numeric_text_width(int value) {
 int FLASHMEM Piquet::cursor_value_width(const Channel &c) const {
       switch (cursor) {
         case CURSOR_LOOP_MODE:
-          return 24;
+          return 18;
         case CURSOR_ATTACK:
           return numeric_text_width(StageTicks(c.stage_value[STAGE_ATTACK]) / 17) + 12;
         case CURSOR_DECAY:
