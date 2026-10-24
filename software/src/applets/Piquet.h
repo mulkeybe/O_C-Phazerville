@@ -1314,7 +1314,7 @@ const char* FLASHMEM Piquet::cursor_label() const {
     }
 
 const char* FLASHMEM Piquet::type_name(uint8_t t) {
-      static const char* names[ENV_TYPE_LAST] = { "AD", "AHR", "ASR", "ADSR", "LoopAD", "LoopAHR" };
+      static const char* names[ENV_TYPE_LAST] = { "AD", "AHR", "ASR", "ADSR", "L-AD", "L-AHR" };
       return names[constrain(t, 0, ENV_TYPE_LAST - 1)];
     }
 
