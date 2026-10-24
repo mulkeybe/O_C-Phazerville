@@ -420,17 +420,17 @@ private:
     int next_visible_cursor(int current, int direction, EnvType type) {
       if (current == CURSOR_CHANNEL) {
         parameter_navigation = false;
-        return direction > 0 ? CURSOR_LENGTH : CURSOR_CHANNEL;
-      }
-
-      if (current == CURSOR_LENGTH) {
-        parameter_navigation = false;
         return direction > 0 ? CURSOR_TYPE : CURSOR_CHANNEL;
       }
 
       if (current == CURSOR_TYPE) {
         parameter_navigation = false;
-        if (direction < 0) return CURSOR_LENGTH;
+        return direction < 0 ? CURSOR_CHANNEL : CURSOR_LENGTH;
+      }
+
+      if (current == CURSOR_LENGTH) {
+        parameter_navigation = false;
+        if (direction < 0) return CURSOR_TYPE;
         if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
           return CURSOR_LOOP_MODE;
         return cursor_for_stage_index(0, type, false);
@@ -489,8 +489,7 @@ private:
         }
 
         if (stage == 0) {
-          return (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
-            ? CURSOR_LOOP_MODE : CURSOR_TYPE;
+          return CURSOR_LENGTH;
         }
         return cursor_for_stage_index(stage - 1, type, false);
       }
@@ -952,7 +951,15 @@ void FLASHMEM Piquet::DrawIndicators() {
 void FLASHMEM Piquet::DrawParamRow(int x_offset) {
       Channel &c = channels[selected_channel];
 
-      if (cursor == CURSOR_CHANNEL || cursor == CURSOR_LENGTH) {
+      if (cursor == CURSOR_CHANNEL ||
+          cursor == CURSOR_TYPE || cursor == CURSOR_LENGTH) {
+        if (cursor == CURSOR_TYPE) {
+          const char* value = type_name(c.type);
+          const int value_x = 9 + x_offset;
+          gfxPrint(value_x, 22, value);
+          if (EditMode()) gfxInvert(value_x, 21, strlen(value) * 6, 9);
+        }
+
         static const char* length_names[] = {"x1", "x2", "x4", "x8"};
         gfxIcon(40 + x_offset, 22, ENV_ICON);
         gfxPrint(49 + x_offset, 22, length_names[constrain(c.length_index, 0, 3)]);
@@ -960,8 +967,6 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
           gfxCursor(49 + x_offset, 31, 12, 9, cursor_label());
         return;
       }
-
-      if (cursor == CURSOR_CHANNEL) return;
 
       if (cursor >= CURSOR_ATTACK_SHAPE) {
         const char *label = "";
@@ -1043,15 +1048,6 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
       }
 
       switch (cursor) {
-        case CURSOR_TYPE: {
-          const char* value = type_name(c.type);
-          const int value_x = 9 + x_offset;
-          gfxPrint(value_x, 22, value);
-          if (EditMode()) {
-            gfxInvert(value_x, 21, strlen(value) * 6, 9);
-          }
-          break;
-        }
         case CURSOR_LOOP_MODE: {
           const char* loop_text = c.loop_mode == LOOP_GATE ? "Gate" : "Cont";
           gfxIcon(9 + x_offset, 22, LOOP_ICON);
