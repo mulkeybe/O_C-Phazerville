@@ -44,7 +44,7 @@ public:
     enum LoopMode : uint8_t {
       LOOP_CONT,
       LOOP_GATE,
-      LOOP_MODE_LAST
+      LOOP_MODE_COUNT
     };
 
     // Stage indices are also used to index stage_value[].
@@ -59,7 +59,7 @@ public:
       DELAY_OFF,
       DELAY_REPLACE,
       DELAY_QUEUE,
-      DELAY_MODE_LAST
+      DELAY_MODE_COUNT
     };
 
     enum CVMap : uint8_t {
@@ -70,7 +70,7 @@ public:
       CVMAP_RELEASE,
       CVMAP_ADR,
       CVMAP_LEVEL,
-      CVMAP_LAST
+      CVMAP_COUNT
     };
 
     enum ShapeType : uint8_t {
@@ -85,7 +85,7 @@ public:
       SHAPE_MEDIUM_DIPPER,
       SHAPE_LITTLE_DIPPER,
       SHAPE_SINEFOLD,
-      SHAPE_LAST
+      SHAPE_COUNT
     };
 
     enum Cursor : uint8_t {
@@ -106,7 +106,7 @@ public:
       CURSOR_CV_MAP,
       CURSOR_LEVEL,
       CURSOR_INVERT,
-      CURSOR_LAST
+      CURSOR_COUNT
     };
 
     struct TriggerQueue {
@@ -235,8 +235,8 @@ public:
         stage_value[STAGE_SUSTAIN] = constrain(Unpack(data, PackLocation {19,8}), 0, STAGE_MAX_VALUE);
         stage_value[STAGE_RELEASE] = constrain(Unpack(data, PackLocation {27,8}), 1, STAGE_MAX_VALUE);
         delay_index = constrain(Unpack(data, PackLocation {35,7}), 0, 126);
-        delay_mode = constrain(Unpack(data, PackLocation {43,2}), 0, DELAY_MODE_LAST - 1);
-        cv_map = constrain(Unpack(data, PackLocation {45,3}), 0, CVMAP_LAST - 1);
+        delay_mode = constrain(Unpack(data, PackLocation {43,2}), 0, DELAY_MODE_COUNT - 1);
+        cv_map = constrain(Unpack(data, PackLocation {45,3}), 0, CVMAP_COUNT - 1);
         level = constrain(Unpack(data, PackLocation {48,8}), 0, 255);
         inverted = Unpack(data, PackLocation {56,1});
         loop_mode = Unpack(data, PackLocation {57,1});
@@ -468,7 +468,7 @@ private:
           next += direction;
 
           // Stop at either end; never wrap around.
-          if (next < CURSOR_ATTACK_SHAPE || next >= CURSOR_LAST) {
+          if (next < CURSOR_ATTACK_SHAPE || next >= CURSOR_COUNT) {
             return current;
           }
 
@@ -855,19 +855,19 @@ void FLASHMEM Piquet::OnEncoderMove(int direction) {
           break;
         case CURSOR_LOOP_MODE:
           c.loop_mode = constrain(
-            c.loop_mode + direction, 0, LOOP_MODE_LAST - 1);
+            c.loop_mode + direction, 0, LOOP_MODE_COUNT - 1);
           break;
         case CURSOR_ATTACK:
           c.stage_value[STAGE_ATTACK] = constrain(c.stage_value[STAGE_ATTACK] + direction, 1, STAGE_MAX_VALUE);
           break;
         case CURSOR_ATTACK_SHAPE:
-          c.attack_shape = constrain(c.attack_shape + direction, 0, SHAPE_LAST - 1);
+          c.attack_shape = constrain(c.attack_shape + direction, 0, SHAPE_COUNT - 1);
           break;
         case CURSOR_DECAY:
           c.stage_value[STAGE_DECAY] = constrain(c.stage_value[STAGE_DECAY] + direction, 1, STAGE_MAX_VALUE);
           break;
         case CURSOR_DECAY_SHAPE:
-          c.decay_shape = constrain(c.decay_shape + direction, 0, SHAPE_LAST - 1);
+          c.decay_shape = constrain(c.decay_shape + direction, 0, SHAPE_COUNT - 1);
           break;
         case CURSOR_SUSTAIN:
           c.stage_value[STAGE_SUSTAIN] = constrain(c.stage_value[STAGE_SUSTAIN] + direction, 0, STAGE_MAX_VALUE);
@@ -876,16 +876,16 @@ void FLASHMEM Piquet::OnEncoderMove(int direction) {
           c.stage_value[STAGE_RELEASE] = constrain(c.stage_value[STAGE_RELEASE] + direction, 1, STAGE_MAX_VALUE);
           break;
         case CURSOR_RELEASE_SHAPE:
-          c.release_shape = constrain(c.release_shape + direction, 0, SHAPE_LAST - 1);
+          c.release_shape = constrain(c.release_shape + direction, 0, SHAPE_COUNT - 1);
           break;
         case CURSOR_DELAY:
           c.delay_index = constrain(c.delay_index + direction, 0, 126);
           break;
         case CURSOR_DELAY_MODE:
-          c.delay_mode = constrain(c.delay_mode + direction, 0, DELAY_MODE_LAST - 1);
+          c.delay_mode = constrain(c.delay_mode + direction, 0, DELAY_MODE_COUNT - 1);
           break;
         case CURSOR_CV_MAP:
-          c.cv_map = constrain(c.cv_map + direction, 0, CVMAP_LAST - 1);
+          c.cv_map = constrain(c.cv_map + direction, 0, CVMAP_COUNT - 1);
           break;
         case CURSOR_LEVEL:
           c.level = constrain(c.level + direction, 0, 255);
@@ -1244,7 +1244,7 @@ int FLASHMEM Piquet::cursor_value_width(const Channel &c) const {
 }
 
 const char* FLASHMEM Piquet::cursor_label() const {
-      static const char* labels[CURSOR_LAST] = {
+      static const char* labels[CURSOR_COUNT] = {
         "Channel", "Length", "Envelope", "EnvType", "LoopMode",
         "Attack", "Decay", "Sustain", "Release",
         "AttShape", "DcyShape", "RelShape",
@@ -1254,7 +1254,7 @@ const char* FLASHMEM Piquet::cursor_label() const {
           channels[selected_channel].type == ENV_LOOP_AHR) {
         if (cursor == CURSOR_DECAY) return "Hold";
       }
-      return labels[constrain(cursor, 0, CURSOR_LAST - 1)];
+      return labels[constrain(cursor, 0, CURSOR_COUNT - 1)];
 }
 
 const char* FLASHMEM Piquet::type_name(uint8_t t) {
@@ -1263,18 +1263,18 @@ const char* FLASHMEM Piquet::type_name(uint8_t t) {
 }
 
 const char* FLASHMEM Piquet::dmode_name(uint8_t m) {
-      static const char* names[DELAY_MODE_LAST] = { "Off", "Rpl", "Que" };
-      return names[constrain(m, 0, DELAY_MODE_LAST - 1)];
+      static const char* names[DELAY_MODE_COUNT] = { "Off", "Rpl", "Que" };
+      return names[constrain(m, 0, DELAY_MODE_COUNT - 1)];
 }
 
 const char* FLASHMEM Piquet::cvmap_name(uint8_t m) {
-      static const char* names[CVMAP_LAST] = { "None", "Att", "Dec", "Sus", "Rel", "ADR", "Lvl" };
-      return names[constrain(m, 0, CVMAP_LAST - 1)];
+      static const char* names[CVMAP_COUNT] = { "None", "Att", "Dec", "Sus", "Rel", "ADR", "Lvl" };
+      return names[constrain(m, 0, CVMAP_COUNT - 1)];
 }
 
 const char* FLASHMEM Piquet::shape_name(uint8_t s) {
-      static const char* names[SHAPE_LAST] = { "Lin", "Exp", "Qua", "Sin", "Pla", "Cli", "Gat", "BD", "MD", "LD", "SF" };
-      return names[constrain(s, 0, SHAPE_LAST - 1)];
+      static const char* names[SHAPE_COUNT] = { "Lin", "Exp", "Qua", "Sin", "Pla", "Cli", "Gat", "BD", "MD", "LD", "SF" };
+      return names[constrain(s, 0, SHAPE_COUNT - 1)];
 }
 
 uint64_t FLASHMEM Piquet::OnDataRequest() {
@@ -1307,9 +1307,9 @@ void FLASHMEM Piquet::OnDataReceive(uint64_t data) {
       channels[1].attack_shape, channels[1].decay_shape, channels[1].release_shape
     );
     ForEachChannel(ch) {
-      CONSTRAIN(channels[ch].attack_shape, 0, SHAPE_LAST - 1);
-      CONSTRAIN(channels[ch].decay_shape, 0, SHAPE_LAST - 1);
-      CONSTRAIN(channels[ch].release_shape, 0, SHAPE_LAST - 1);
+      CONSTRAIN(channels[ch].attack_shape, 0, SHAPE_COUNT - 1);
+      CONSTRAIN(channels[ch].decay_shape, 0, SHAPE_COUNT - 1);
+      CONSTRAIN(channels[ch].release_shape, 0, SHAPE_COUNT - 1);
     }
   }
 }
