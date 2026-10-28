@@ -1104,7 +1104,7 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
         const int next_level = i + 1 < width
             ? constrain(static_cast<int>(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)
             : level;
-        const int baseline = BottomAlign(c.inverted ? DISPLAY_HEIGHT : 0) + 1;
+        const int baseline = BottomAlign(0) + 1;
         for (int fill_x = x; fill_x <= next_x; ++fill_x) {
           const int interpolated_level = next_x > x
               ? level + (next_level - level) * (fill_x - x) / (next_x - x)
