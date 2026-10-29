@@ -103,6 +103,7 @@ public:
       CURSOR_RELEASE_SHAPE,
       CURSOR_DELAY_MODE,
       CURSOR_DELAY,
+      CURSOR_EOC,
       CURSOR_CV_MAP,
       CURSOR_LEVEL,
       CURSOR_INVERT,
@@ -160,6 +161,8 @@ public:
       uint8_t loop_mode;
       bool loop_enabled;
       bool inverted;
+      bool eoc_enabled;
+      bool eoc_trigger_pending;
       uint8_t length_index;
       peaks::MultistageEnvelope peaks_envelope;
       bool peaks_trigger_pending;
@@ -194,6 +197,8 @@ public:
         loop_mode = LOOP_CONT;
         loop_enabled = false;
         inverted = false;
+        eoc_enabled = false;
+        eoc_trigger_pending = false;
         length_index = 0;
         peaks_envelope.Init();
         peaks_trigger_pending = false;
@@ -225,7 +230,8 @@ public:
         Pack(data, PackLocation {57,1}, loop_mode);
         Pack(data, PackLocation {58,1}, loop_enabled ? 1 : 0);
         Pack(data, PackLocation {59,2}, length_index);
-        // 3 empty bits
+        Pack(data, PackLocation {61,1}, eoc_enabled ? 1 : 0);
+        // 2 empty bits
         return data;
       }
       void unpack(uint64_t data) {
@@ -242,7 +248,8 @@ public:
         loop_mode = Unpack(data, PackLocation {57,1});
         loop_enabled = false;
         length_index = constrain(Unpack(data, PackLocation {59,2}), 0, 3);
-        // 3 empty bits
+        eoc_enabled = Unpack(data, PackLocation {61,1});
+        // 2 empty bits
       }
 
       bool is_looping() const {
@@ -733,33 +740,49 @@ void FLASHMEM Piquet::Controller() {
 
         const bool gate = Gate(ch);
         const bool clock_trigger = Clock(ch);
+        const bool eoc_trigger = c.eoc_trigger_pending;
+        c.eoc_trigger_pending = false;
+        const bool trigger = clock_trigger || eoc_trigger;
         const bool gate_fall = !gate && c.gate_prev;
         c.gate_prev = gate;
 
-        if (c.is_looping()) {
-          if (c.loop_mode == LOOP_CONT) {
-            if (clock_trigger) c.loop_enabled = !c.loop_enabled;
-          } else {
-            c.loop_enabled = gate;
-          }
+        if (c.is_looping() && c.loop_mode != LOOP_CONT) {
+          c.loop_enabled = gate;
         }
 
-        if (clock_trigger) {
+        if (trigger) {
           const int32_t delay_ms = c.delay_index < 100
               ? static_cast<int32_t>(c.delay_index) * 10
               : 1000 + static_cast<int32_t>(c.delay_index - 100) * 100;
           const int32_t dticks = (delay_ms * 1000L) / 60;
           if (c.delay_mode == DELAY_OFF || dticks <= 0) {
             c.trigger_queue.Reset();
-            begin_attack(c);
+            if (c.is_looping() && c.loop_mode == LOOP_CONT) {
+              c.loop_enabled = !c.loop_enabled;
+              if (c.loop_enabled) begin_attack(c);
+            } else {
+              begin_attack(c);
+            }
           } else {
             c.trigger_queue.Add(dticks, c.delay_mode == DELAY_QUEUE);
           }
         }
 
-        if (c.trigger_queue.TickReady()) begin_attack(c);
+        if (c.trigger_queue.TickReady()) {
+          if (c.is_looping() && c.loop_mode == LOOP_CONT) {
+            c.loop_enabled = !c.loop_enabled;
+            if (c.loop_enabled) begin_attack(c);
+          } else {
+            begin_attack(c);
+          }
+        }
 
         process_envelope(c, gate, gate_fall, ch);
+        const bool eoc_event =
+            !c.peaks_waiting_for_trigger &&
+            (c.peaks_envelope.get_state_mask() & peaks::ENV_EOC) != 0;
+        if (eoc_event && c.eoc_enabled)
+          channels[1 - ch].eoc_trigger_pending = true;
 
         int out = simfloat2int(c.output);
         int level = c.level;
@@ -884,6 +907,9 @@ void FLASHMEM Piquet::OnEncoderMove(int direction) {
         case CURSOR_DELAY_MODE:
           c.delay_mode = constrain(c.delay_mode + direction, 0, DELAY_MODE_COUNT - 1);
           break;
+        case CURSOR_EOC:
+          if (direction) c.eoc_enabled = !c.eoc_enabled;
+          break;
         case CURSOR_CV_MAP:
           c.cv_map = constrain(c.cv_map + direction, 0, CVMAP_COUNT - 1);
           break;
@@ -972,6 +998,10 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
             label = "DlyM:";
             value = dmode_name(c.delay_mode);
             break;
+          case CURSOR_EOC:
+            label = "EOC";
+            value = c.eoc_enabled ? "Yes" : "No";
+            break;
           case CURSOR_CV_MAP:
             label = "Cv:";
             value = cvmap_name(c.cv_map);
@@ -987,8 +1017,15 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
             break;
         }
 
-        gfxPrint(9 + x_offset, 20, label);
-        value_x = x_offset + 9 + static_cast<int>(strlen(label)) * 6;
+        if (cursor == CURSOR_EOC) {
+          gfxPrint(9 + x_offset, 20, label);
+          gfxIcon(28 + x_offset, 20, RIGHT_ICON);
+          gfxPrint(35 + x_offset, 20, ":");
+          value_x = 43 + x_offset;
+        } else {
+          gfxPrint(9 + x_offset, 20, label);
+          value_x = x_offset + 9 + static_cast<int>(strlen(label)) * 6;
+        }
 
         if (cursor == CURSOR_DELAY) {
           if (c.delay_index < 100) {
@@ -1092,8 +1129,8 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
       };
 
       const auto preview_x = [&](uint16_t point) {
-        return x_offset + (width > 1
-            ? Proportion(point, width - 1, 62) : 0);
+        return x_offset + 1 + (width > 1
+            ? Proportion(point, width - 1, 61) : 0);
       };
 
       // Fill the envelope with interpolated vertical columns.
@@ -1138,6 +1175,9 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
         previous_x = x;
         previous_y = y;
       }
+
+      // EOC marker: top-right corner of the envelope graphic.
+      draw_pixel(preview_x(width - 1), BottomAlign(DISPLAY_HEIGHT));
 
       // Mark stage boundaries along the bottom of the preview.
       for (uint8_t i = 0;
@@ -1188,6 +1228,7 @@ const char* FLASHMEM Piquet::cursor_display_label() const {
         case CURSOR_RELEASE_SHAPE: return "RelShape";
         case CURSOR_DELAY: return "TrgDelay";
         case CURSOR_DELAY_MODE: return "DlyMode";
+        case CURSOR_EOC: return "Send EOC";
         case CURSOR_CV_MAP: return "CV Map";
         case CURSOR_LEVEL: return "Level";
         case CURSOR_INVERT: return "Invert";
@@ -1232,6 +1273,8 @@ int FLASHMEM Piquet::cursor_value_width(const Channel &c) const {
           return c.delay_index < 100 ? 30 : 24;
         case CURSOR_DELAY_MODE:
           return min(static_cast<int>(strlen(dmode_name(c.delay_mode))) * 6, 52);
+        case CURSOR_EOC:
+          return 18;
         case CURSOR_CV_MAP:
           return min(static_cast<int>(strlen(cvmap_name(c.cv_map))) * 6, 52);
         case CURSOR_LEVEL:
@@ -1248,7 +1291,7 @@ const char* FLASHMEM Piquet::cursor_label() const {
         "Channel", "Length", "Envelope", "EnvType", "LoopMode",
         "Attack", "Decay", "Sustain", "Release",
         "AttShape", "DcyShape", "RelShape",
-        "Delay Mode", "Delay", "CV Map", "Level", "Invert"
+        "Delay Mode", "Delay", "Send EOC", "CV Map", "Level", "Invert"
       };
       if (channels[selected_channel].type == ENV_AHR ||
           channels[selected_channel].type == ENV_LOOP_AHR) {
