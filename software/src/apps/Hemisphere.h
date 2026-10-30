@@ -686,7 +686,7 @@ public:
     }
 
     template <typename T1>
-    void ProcessMIDI(T1 &device) {
+    void ProcessMIDI(T1 &device, bool allow_sysex = true) {
         HS::IOFrame &f = HS::frame;
         int load_slot = -1;
 
@@ -696,7 +696,8 @@ public:
             const uint8_t data2 = device.getData2();
 
             if (message == usbMIDI.SystemExclusive) {
-                ReceiveManagerSysEx();
+                if (allow_sysex)
+                    ReceiveManagerSysEx();
                 continue;
             }
 
@@ -717,6 +718,9 @@ public:
         timeout = 0;
         // top-level MIDI-to-CV handling - alters frame outputs
         ProcessMIDI(usbMIDI);
+#if defined(ARDUINO_TEENSY40)
+        ProcessMIDI(MIDI1, false);
+#endif
     }
 
     void Controller() {

@@ -311,6 +311,10 @@ public:
               MIDI1.sendRealTime(midi::MidiType(usbMIDI.Start));
 #else
             usbMIDI.sendRealTime(usbMIDI.Start);
+#if defined(ARDUINO_TEENSY40)
+            if (~midi_clktx_disable & mMaskSerial)
+                MIDI1.sendRealTime(midi::MidiType(usbMIDI.Start));
+#endif
 #endif
         }
     }
@@ -332,6 +336,10 @@ public:
               MIDI1.sendRealTime(midi::MidiType(usbMIDI.Stop));
 #else
             usbMIDI.sendRealTime(usbMIDI.Stop);
+#if defined(ARDUINO_TEENSY40)
+            if (~midi_clktx_disable & mMaskSerial)
+                MIDI1.sendRealTime(midi::MidiType(usbMIDI.Stop));
+#endif
 #endif
         }
         EnableMIDIOut();

@@ -773,6 +773,10 @@ struct alignas(32) MIDIFrame {
       if (~midi_msgtx_disable & mMaskSerial)   MIDI1.sendAfterTouch(val, midi_ch + 1);
 #else
         usbMIDI.sendAfterTouch(val, midi_ch + 1);
+#if defined(ARDUINO_TEENSY40)
+        if (~midi_msgtx_disable & mMaskSerial)
+            MIDI1.sendAfterTouch(val, midi_ch + 1);
+#endif
 #endif
     }
     void SendPitchBend(const uint8_t midi_ch, int bend) {
@@ -784,6 +788,10 @@ struct alignas(32) MIDIFrame {
       if (~midi_msgtx_disable & mMaskSerial)   MIDI1.sendPitchBend(bend, midi_ch + 1);
 #else
       usbMIDI.sendPitchBend(bend, midi_ch + 1);
+#if defined(ARDUINO_TEENSY40)
+      if (~midi_msgtx_disable & mMaskSerial)
+          MIDI1.sendPitchBend(bend, midi_ch + 1);
+#endif
 #endif
     }
 
@@ -796,6 +804,10 @@ struct alignas(32) MIDIFrame {
       if (~midi_msgtx_disable & mMaskSerial)   MIDI1.sendControlChange(ccnum, val, midi_ch + 1);
 #else
       usbMIDI.sendControlChange(ccnum, val, midi_ch + 1);
+#if defined(ARDUINO_TEENSY40)
+      if (~midi_msgtx_disable & mMaskSerial)
+          MIDI1.sendControlChange(ccnum, val, midi_ch + 1);
+#endif
 #endif
     }
     void SendNoteOn(const uint8_t midi_ch, uint8_t note = 255, uint8_t vel = 100) {
@@ -809,6 +821,10 @@ struct alignas(32) MIDIFrame {
       if (~midi_msgtx_disable & mMaskSerial)   MIDI1.sendNoteOn(note, vel, midi_ch + 1);
 #else
       usbMIDI.sendNoteOn(note, vel, midi_ch + 1);
+#if defined(ARDUINO_TEENSY40)
+      if (~midi_msgtx_disable & mMaskSerial)
+          MIDI1.sendNoteOn(note, vel, midi_ch + 1);
+#endif
 #endif
     }
     void SendNoteOff(const uint8_t midi_ch, uint8_t note = 255, uint8_t vel = 0) {
@@ -821,6 +837,10 @@ struct alignas(32) MIDIFrame {
       if (~midi_msgtx_disable & mMaskSerial)   MIDI1.sendNoteOff(note, vel, midi_ch + 1);
 #else
       usbMIDI.sendNoteOff(note, vel, midi_ch + 1);
+#if defined(ARDUINO_TEENSY40)
+      if (~midi_msgtx_disable & mMaskSerial)
+          MIDI1.sendNoteOff(note, vel, midi_ch + 1);
+#endif
 #endif
     }
 };

@@ -59,7 +59,6 @@ MIDIDevice_BigBuffer usbHostMIDI[2] {
 USBHIDParser hid1(thisUSB);
 JoystickController joystick(thisUSB);
 #endif
-MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI1);
 #include "AudioIO.h"
 #include "usb_desc.h"
 #include "Wire.h"
@@ -94,6 +93,12 @@ void ScanI2C() {
   interrupts();
 }
 #endif // ARDUINO_TEENSY41
+
+#if defined(ARDUINO_TEENSY41)
+MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDI1);
+#elif defined(ARDUINO_TEENSY40)
+MIDI_CREATE_INSTANCE(HardwareSerial, Serial7, MIDI1);
+#endif
 
 uint_fast8_t MENU_REDRAW = true;
 static OC::UiMode ui_mode = OC::UI_MODE_MENU;
@@ -397,6 +402,12 @@ FLASHMEM void setup() {
   }
   // USB Host support for 4.1 only
   thisUSB.begin();
+#endif
+
+#if defined(ARDUINO_TEENSY40)
+  // Standard MIDI I/O on Serial7, Teensy 4.0 underside pads
+  Serial7.begin(31250);
+  MIDI1.begin(MIDI_CHANNEL_OMNI);
 #endif
 
 #if defined(MULTIBOOT) && (MULTIBOOT == 0)

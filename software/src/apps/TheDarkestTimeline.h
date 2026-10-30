@@ -102,6 +102,20 @@ public:
                 in_velocity = data2;
             }
         }
+#if defined(ARDUINO_TEENSY40)
+        if (MIDI1.read()) {
+            int message = MIDI1.getType();
+            int channel = MIDI1.getChannel();
+            int data1 = MIDI1.getData1();
+            int data2 = MIDI1.getData2();
+
+            if (message == HEM_MIDI_NOTE_ON && channel == midi_channel_in()) {
+                note_on = 1;
+                in_note_number = data1;
+                in_velocity = data2;
+            }
+        }
+#endif
 
         // Step forward with Digital 1
         int gate_ticks = HEMISPHERE_CLOCK_TICKS;
@@ -194,11 +208,19 @@ public:
 
                     // Send the MIDI Note On
                     if (last_midi_note[0] > -1) usbMIDI.sendNoteOff(last_midi_note[0], 0, last_midi_channel[0]);
+#if defined(ARDUINO_TEENSY40)
+                    if (~midi_msgtx_disable & mMaskSerial)
+                        if (last_midi_note[0] > -1) MIDI1.sendNoteOff(last_midi_note[0], 0, last_midi_channel[0]);
+#endif
                     if (midi_channel()) {
                         last_midi_channel[0] = midi_channel();
                         last_midi_note[0] = MIDIQuantizer::NoteNumber(get_data_at(idx, DT_CV_TIMELINE), transpose);
                         vel = Proportion(cv, HSAPPLICATION_5V, 127);
                         usbMIDI.sendNoteOn(last_midi_note[0], vel, last_midi_channel[0]);
+#if defined(ARDUINO_TEENSY40)
+                        if (~midi_msgtx_disable & mMaskSerial)
+                            MIDI1.sendNoteOn(last_midi_note[0], vel, last_midi_channel[0]);
+#endif
                         last_length[0] = HS::get_tick() - last_clock[0];
                         last_clock[0] = HS::get_tick();
                     }
@@ -211,12 +233,20 @@ public:
 
                     // Send the MIDI Note On for Alternate Universe
                     if (last_midi_note[1] > -1) usbMIDI.sendNoteOff(last_midi_note[1], 0, last_midi_channel[1]);
+#if defined(ARDUINO_TEENSY40)
+                    if (~midi_msgtx_disable & mMaskSerial)
+                        if (last_midi_note[1] > -1) MIDI1.sendNoteOff(last_midi_note[1], 0, last_midi_channel[1]);
+#endif
                     if (midi_channel_alt()) {
                         last_midi_channel[1] = midi_channel_alt();
                         uint8_t alt_idx = (idx + length()) % 32;
                         last_midi_note[1] = MIDIQuantizer::NoteNumber(get_data_at(alt_idx, DT_CV_TIMELINE));
                         vel = Proportion(get_data_at(alt_idx, DT_PROBABILITY_TIMELINE), HSAPPLICATION_5V, 127);
                         usbMIDI.sendNoteOn(last_midi_note[1], vel, last_midi_channel[1]);
+#if defined(ARDUINO_TEENSY40)
+                        if (~midi_msgtx_disable & mMaskSerial)
+                            MIDI1.sendNoteOn(last_midi_note[1], vel, last_midi_channel[1]);
+#endif
                         last_length[1] = HS::get_tick() - last_clock[1];
                         last_clock[1] = HS::get_tick();
                     }
@@ -229,6 +259,10 @@ public:
         {
             if (last_midi_note[ch] > -1 && (HS::get_tick() - last_clock[ch]) > (last_length[ch]) * 2) {
                 usbMIDI.sendNoteOff(last_midi_note[ch], 0, last_midi_channel[ch]);
+#if defined(ARDUINO_TEENSY40)
+                if (~midi_msgtx_disable & mMaskSerial)
+                    MIDI1.sendNoteOff(last_midi_note[ch], 0, last_midi_channel[ch]);
+#endif
                 last_midi_note[ch] = -1;
             }
         }

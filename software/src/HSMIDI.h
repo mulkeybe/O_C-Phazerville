@@ -39,6 +39,9 @@
 
 #if defined(ARDUINO_TEENSY41)
 extern MIDIDevice_BigBuffer usbHostMIDI[2];
+#endif
+
+#if defined(ARDUINO_TEENSY40) || defined(ARDUINO_TEENSY41)
 extern midi::MidiInterface<midi::SerialMIDI<HardwareSerial> > MIDI1;
 #endif
 #endif

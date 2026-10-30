@@ -224,6 +224,9 @@ public:
         process_midi_in(usbHostMIDI[1]);
         process_midi_in(MIDI1);
 #endif
+#if defined(ARDUINO_TEENSY40)
+        process_midi_in(MIDI1, false);
+#endif
 
         // Convert CV inputs to outgoing MIDI messages
         process_midi_out();
@@ -739,7 +742,7 @@ private:
     }
 
     template <typename T1>
-    void process_midi_in(T1 &device) {
+    void process_midi_in(T1 &device, bool allow_sysex = true) {
         if (device.read()) {
             uint8_t message = device.getType();
             uint8_t channel = device.getChannel();
@@ -747,7 +750,8 @@ private:
             uint8_t data2 = device.getData2();
 
             // Handle system exclusive dump for Setup data
-            if (message == HEM_MIDI_SYSEX) OnReceiveSysEx();
+            if (message == HEM_MIDI_SYSEX && allow_sysex)
+                OnReceiveSysEx();
 
             HS::frame.MIDIState.ProcessMIDIMsg({channel, message, data1, data2});
             //old_process_midi_in(message, channel, data1, data2);

@@ -394,6 +394,24 @@ public:
             }
         }
 #endif
+#if defined(ARDUINO_TEENSY40)
+        while (MIDI1.read()) {
+            const uint8_t message = MIDI1.getType();
+            const uint8_t data1 = MIDI1.getData1();
+            const uint8_t data2 = MIDI1.getData2();
+
+            if (message == usbMIDI.SystemExclusive) {
+                // TODO: consider implementing SysEx import/export for Calibr8or
+                continue;
+            }
+
+            f.MIDIState.ProcessMIDIMsg({MIDI1.getChannel(), message, data1, data2});
+
+            if (message == usbMIDI.NoteOn || message == usbMIDI.NoteOff) {
+                dothething = true;
+            }
+        }
+#endif
 
         if (dothething) {
           // reconfigure with MIDI-derived masks

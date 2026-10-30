@@ -119,6 +119,10 @@ public:
         if (clock_m.IsRunning() && clock_m.MIDITock()) {
           OC::CORE::DeferTask([](){
             usbMIDI.sendRealTime(usbMIDI.Clock);
+#if defined(ARDUINO_TEENSY40)
+            if (~midi_clktx_disable & mMaskSerial)
+              MIDI1.sendRealTime(midi::MidiType(usbMIDI.Clock));
+#endif
           });
         }
 
