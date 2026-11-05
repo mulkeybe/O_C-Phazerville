@@ -192,6 +192,11 @@ uint16_t MultistageEnvelope::RenderPreview(
     }
     start_value = b;
   }
+
+  // The final segment has no following segment to contribute its endpoint.
+  // Replace its last preview sample with the exact final level.
+  if (current_pos) *(values - 1) = start_value;
+
   // Current setups loop at num_segments_
   if (loop_end_ && segment == loop_end_)
     *loop_points++ = current_pos;

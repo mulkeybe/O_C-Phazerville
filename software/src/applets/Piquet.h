@@ -27,7 +27,7 @@ public:
     static constexpr int NUM_CHANNELS = 2;
     static constexpr int NUM_STAGES = 4;
     static constexpr int STAGE_MAX_VALUE = 255;
-    static constexpr int DISPLAY_HEIGHT = 30;
+    static constexpr int DISPLAY_HEIGHT = 32;
     static constexpr uint8_t MAX_TRIGGER_QUEUE = 4;
 
 
@@ -205,9 +205,6 @@ public:
         peaks_waiting_for_trigger = false;
         peaks_configured_type = 0xFF;
         peaks_config_signature = 0xFFFFFFFFu;
-        peaks_cached_attack = 0;
-        peaks_cached_decay = 0;
-        peaks_cached_release = 0;
         peaks_times_cached = false;
 
         gate_prev = false;
@@ -258,12 +255,6 @@ public:
 
       bool should_repeat() const {
         return is_looping() && loop_enabled;
-      }
-
-      bool has_decay() const {
-        return type == ENV_AD || type == ENV_AHR ||
-               type == ENV_ADSR || type == ENV_LOOP_AD ||
-               type == ENV_LOOP_AHR;
       }
 
       bool has_sustain_hold() const {
@@ -516,7 +507,7 @@ private:
       return current;
     }
 
-    static constexpr int StageTicks(uint8_t value) {
+    static int StageTicks(uint8_t value) {
       return HS::kShapeExponential[value] >> 1;
     }
 
@@ -701,7 +692,7 @@ private:
         control |= peaks::CONTROL_GATE_FALLING;
       if ((c.type == ENV_AR || c.type == ENV_ADSR) && gate)
         control |= peaks::CONTROL_GATE;
-      if (c.is_looping() && c.should_repeat())
+      if (c.should_repeat())
         control |= peaks::CONTROL_GATE;
 
       const uint16_t value = env.ProcessSingleSample(control);
@@ -806,7 +797,7 @@ void FLASHMEM Piquet::View() {
       DrawIndicators();
       DrawEnvelope(selected_channel, 0, false);
       if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE)
-        gfxFrame(0, 30, 64, 34);
+        gfxFrame(0, 29, 64, 35);
       DrawParamRow();
       SetAux(true);
 }
@@ -848,7 +839,7 @@ void FLASHMEM Piquet::DrawFullScreen() {
   }
 
   if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE) {
-    gfxFrame(channel_x, 30, 64, 34);
+    gfxFrame(channel_x, 29, 64, 35);
   }
 
   DrawParamRow(channel_x);
@@ -1116,46 +1107,74 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
       if (width > peaks::kPreviewWidth) width = peaks::kPreviewWidth;
 
       const auto draw_pixel = [&](int x, int y) {
+        if (x < x_offset || x >= x_offset + 64 || y < 0 || y >= 64)
+          return;
         if (absolute_coordinates) graphics.setPixel(x, y);
         else gfxPixel(x, y);
       };
 
-      const auto draw_line = [&](int x, int y, int x2, int y2,
-                                 bool dotted = false) {
-        if (absolute_coordinates)
-          graphics.drawLine(x, y, x2, y2, dotted ? 2 : 1);
-        else
-          gfxLine(x, y, x2, y2, dotted);
-      };
-
       const auto preview_x = [&](uint16_t point) {
-        return x_offset + 1 + (width > 1
-            ? Proportion(point, width - 1, 61) : 0);
+        return x_offset + (width > 1
+            ? Proportion(point, width - 1, 63) : 0);
       };
 
-      // Fill the envelope with interpolated vertical columns.
-      for (uint16_t i = 0; i < width && i <= current_phase; ++i) {
-        const int x = preview_x(i);
-        const int next_x = i + 1 < width ? preview_x(i + 1) : x;
-        const int level = constrain(static_cast<int>(values[i] >> 10), 0, DISPLAY_HEIGHT);
-        const int next_level = i + 1 < width
-            ? constrain(static_cast<int>(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)
-            : level;
+
+      // Rasterize the envelope contour once. Use the same pixels
+      // for both the contour and its infill.
+      const auto raster_line =
+          [&](int x0, int y0, int x1, int y1, bool fill,
+              int *highest_y = nullptr) {
+        int dx = abs(x1 - x0);
+        int dy = abs(y1 - y0);
+        const bool steep = dy > dx;
+
+        if (steep) {
+          std::swap(x0, y0);
+          std::swap(x1, y1);
+          std::swap(dx, dy);
+        }
+
+        if (x0 > x1) {
+          std::swap(x0, x1);
+          std::swap(y0, y1);
+        }
+
+        int error = dx >> 1;
+        const int ystep = (y1 > y0) ? 1 : -1;
+        int y = y0;
         const int baseline = BottomAlign(0) + 1;
-        for (int fill_x = x; fill_x <= next_x; ++fill_x) {
-          const int interpolated_level = next_x > x
-              ? level + (next_level - level) * (fill_x - x) / (next_x - x)
-              : level;
-          const int endpoint = BottomAlign(interpolated_level) + 1;
-          const int top = baseline < endpoint ? baseline : endpoint;
-          const int height = abs(endpoint - baseline) + 1;
-          if (absolute_coordinates) {
-            graphics.drawVLine(fill_x, top, height);
+
+        for (int x = x0; x <= x1; ++x) {
+          const int px = steep ? y : x;
+          const int py = steep ? x : y;
+
+          if (highest_y &&
+              px >= x_offset && px < x_offset + 64 &&
+              py >= 0 && py < 64) {
+            const int column = px - x_offset;
+            if (py > highest_y[column]) {
+              highest_y[column] = py;
+            }
+          }
+
+          if (fill) {
+            const int first_y = std::min(py, baseline);
+            const int last_y = std::max(py, baseline);
+
+            for (int fill_y = first_y; fill_y <= last_y; ++fill_y) {
+              draw_pixel(px, fill_y);
+            }
           } else {
-            for (int y = top; y < top + height; ++y) gfxPixel(fill_x, y);
+            draw_pixel(px, py);
+          }
+
+          error -= dy;
+          if (error < 0) {
+            y += ystep;
+            error += dx;
           }
         }
-      }
+      };
 
       int previous_x = -1;
       int previous_y = 0;
@@ -1163,11 +1182,12 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
       for (uint16_t i = 0; i < width; ++i) {
         const int x = preview_x(i);
         const int level = constrain(
-            static_cast<int>(values[i] >> 10), 0, DISPLAY_HEIGHT);
+            int(values[i] >> 10), 0, DISPLAY_HEIGHT);
         const int y = BottomAlign(level) + 1;
 
         if (previous_x >= 0) {
-          draw_line(previous_x, previous_y, x, y, true);
+          raster_line(previous_x, previous_y, x, y,
+                  i < current_phase);
         } else {
           draw_pixel(x, y);
         }
@@ -1176,51 +1196,331 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
         previous_y = y;
       }
 
-      // EOC marker: top-right corner of the envelope graphic.
-      draw_pixel(preview_x(width - 1), BottomAlign(DISPLAY_HEIGHT));
+      // Highlight the selected stage by drawing its contour one pixel
+      // alongside the normal contour.
+      if (channel == selected_channel &&
+            cursor != CURSOR_ATTACK_SHAPE &&
+            cursor != CURSOR_DECAY_SHAPE &&
+            cursor != CURSOR_RELEASE_SHAPE) {
+        const EnvType type = static_cast<EnvType>(c.type);
+        const int stage = cursor_stage_index(cursor, type);
 
-      // Mark stage boundaries along the bottom of the preview.
-      for (uint8_t i = 0;
-           i < 16 && segment_starts[i] != 0xFFFF; ++i) {
-        const uint16_t point = segment_starts[i];
-        if (point >= width) continue;
+        uint16_t stage_start = 0;
+        uint16_t stage_end = 0;
+        bool valid_stage = true;
 
-        const int x = preview_x(point);
-        draw_pixel(x, BottomAlign(DISPLAY_HEIGHT));
+        switch (type) {
+          case ENV_AR:
+            if (stage == 0) {
+              stage_start = segment_starts[0];
+              stage_end = segment_starts[1];
+            } else if (stage == 1) {
+              stage_start = segment_starts[2];
+              stage_end = width;
+            } else {
+              valid_stage = false;
+            }
+            break;
+
+          case ENV_AD:
+          case ENV_LOOP_AD:
+            if (stage == 0) {
+              stage_start = segment_starts[0];
+              stage_end = segment_starts[1];
+            } else if (stage == 1) {
+              stage_start = segment_starts[1];
+              stage_end = width;
+            } else {
+              valid_stage = false;
+            }
+            break;
+
+          case ENV_AHR:
+          case ENV_LOOP_AHR:
+            if (stage == 0) {
+              stage_start = segment_starts[0];
+              stage_end = segment_starts[1];
+            } else if (stage == 1) {
+              stage_start = segment_starts[1];
+              stage_end = segment_starts[2];
+            } else if (stage == 2) {
+              stage_start = segment_starts[3];
+              stage_end = width;
+            } else {
+              valid_stage = false;
+            }
+            break;
+
+          case ENV_ADSR:
+            if (stage == 0) {
+              stage_start = segment_starts[0];
+              stage_end = segment_starts[1];
+            } else if (stage == 1) {
+              stage_start = segment_starts[1];
+              stage_end = segment_starts[2];
+            } else if (stage == 2) {
+              stage_start = segment_starts[2];
+              stage_end = segment_starts[3];
+            } else if (stage == 3) {
+              stage_start = segment_starts[3];
+              stage_end = width;
+            } else {
+              valid_stage = false;
+            }
+            break;
+
+          default:
+            valid_stage = false;
+            break;
+        }
+
+        if (valid_stage && stage_start < stage_end &&
+            stage_end <= width) {
+          // Rasterize both offset paths using identical Bresenham stepping.
+          // The offset uses the dominant perpendicular axis.
+
+
+          const auto offset_segment =
+              [&](int x0, int y0, int x1, int y1,
+                  int side) {
+            const int dx_signed = x1 - x0;
+            const int dy_signed = y1 - y0;
+            const int dx_sq = dx_signed * dx_signed;
+            const int dy_sq = dy_signed * dy_signed;
+
+            int offset_x = 0;
+            int offset_y = 0;
+
+            // Choose one dominant perpendicular axis for a one-pixel offset.
+            if (dy_sq > dx_sq) {
+              offset_x = (dy_signed > 0) ? -side :
+                         (dy_signed < 0) ? side : 0;
+            } else {
+              offset_y = (dx_signed > 0) ? side :
+                         (dx_signed < 0) ? -side : 0;
+            }
+            x0 += offset_x;
+            x1 += offset_x;
+            y0 += offset_y;
+            y1 += offset_y;
+
+            int dx = abs(x1 - x0);
+            int dy = abs(y1 - y0);
+            bool steep = dy > dx;
+
+            if (steep) {
+              std::swap(x0, y0);
+              std::swap(x1, y1);
+              std::swap(dx, dy);
+            }
+
+            if (x0 > x1) {
+              std::swap(x0, x1);
+              std::swap(y0, y1);
+            }
+
+            int err = dx >> 1;
+            const int ystep = (y1 > y0) ? 1 : -1;
+            int y = y0;
+
+            for (int x = x0; x <= x1; ++x) {
+              const int px = steep ? y : x;
+              const int py = steep ? x : y;
+
+              if (px >= x_offset && px < x_offset + 64 &&
+                  py >= 0 && py < 64) {
+                draw_pixel(px, py);
+              }
+
+              err -= dy;
+              if (err < 0) {
+                y += ystep;
+                err += dx;
+              }
+            }
+          };
+
+                // Collect the highest contour Y in each column of the selected stage.
+      int stage_highest_y[64];
+      for (int &y : stage_highest_y) y = -1;
+
+      for (uint16_t i = stage_start;
+           i < stage_end && i + 1 < width; ++i) {
+        const int x1 = preview_x(i);
+        const int x2 = preview_x(i + 1);
+        const int y1 = BottomAlign(constrain(
+            int(values[i] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+        const int y2 = BottomAlign(constrain(
+            int(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+
+        raster_line(x1, y1, x2, y2, false, stage_highest_y);
       }
 
-      if (channel != selected_channel) return;
+      const auto clear_pixel = [&](int x, int y) {
+        if (x >= x_offset && x < x_offset + 64 &&
+            y >= 0 && y < 64) {
+          if (absolute_coordinates)
+            graphics.clearRect(x, y, 1, 1);
+          else
+            gfxClear(x, y, 1, 1);
+        }
+      };
 
-      const int stage =
-          (cursor == CURSOR_ATTACK_SHAPE ||
-           cursor == CURSOR_DECAY_SHAPE ||
-           cursor == CURSOR_RELEASE_SHAPE)
-              ? -1
-              : cursor_stage_index(cursor, static_cast<EnvType>(c.type));
+      const uint16_t final_point =
+          (stage_end < width) ? stage_end : width - 1;
 
-      if (stage < 0) return;
+      // Start and finish one pixel below the actual stage endpoints.
+      const int stage_start_x = preview_x(stage_start);
+      const int start_sample_y = BottomAlign(constrain(
+          int(values[stage_start] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+      const int start_x = stage_start_x - (stage_start > 0 ? 1 : 0);
+      const int start_column = constrain(
+          stage_start_x - x_offset, 0, 63);
+      const int start_y = stage_start > 0
+          ? start_sample_y
+          : (stage_highest_y[start_column] >= 0
+              ? stage_highest_y[start_column] + 1
+              : start_sample_y);
 
-      int start_index = stage;
-      if ((c.type == ENV_AR && stage == 1) ||
-          ((c.type == ENV_AHR || c.type == ENV_LOOP_AHR) && stage == 2)) {
-        ++start_index;
+      const int final_x = preview_x(final_point);
+      const int end_y = BottomAlign(constrain(
+          int(values[final_point] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+      const int end_x =
+          final_x + ((stage_end < width) ? 1 : 0);
+
+      const int first_column =
+          constrain(start_x - x_offset, 0, 63);
+      const int last_column =
+          constrain(end_x - x_offset, 0, 63);
+
+      // Follow the lower contour boundary, one pixel below its rasterized Y.
+      int path_x = start_x;
+      int path_y = start_y;
+      bool at_stage_start = true;
+      clear_pixel(path_x, path_y);
+
+      if (first_column == last_column) {
+        // Both endpoints occupy the same display column.
+        while (path_y != end_y) {
+          path_y += (end_y > path_y) ? 1 : -1;
+          clear_pixel(path_x, path_y);
+        }
+      } else {
+        for (int column = first_column + 1;
+             column <= last_column; ++column) {
+          int target_y;
+
+          if (column == last_column) {
+            // Use the actual endpoint, including the intermediate-stage
+            // one-pixel extension when applicable.
+            target_y = end_y;
+          } else if (stage_highest_y[column] >= 0) {
+            target_y = stage_highest_y[column] + 1;
+          } else {
+            target_y = path_y;
+          }
+
+          // Connect vertically at the previous X until the next boundary
+          // pixel can touch by a side or corner.
+          while (abs(target_y - path_y) > 1) {
+            path_y += (target_y > path_y) ? 1 : -1;
+            const int connector_offset =
+                (stage_start == 0) ? 1 : (at_stage_start ? 0 : -1);
+            clear_pixel(path_x + connector_offset, path_y);
+          }
+
+          // Complete the connection at the next X.
+          path_x = x_offset + column;
+          path_y = target_y;
+          at_stage_start = false;
+          clear_pixel(path_x, path_y);
+        }
       }
 
-      if (start_index >= 15 || segment_starts[start_index] == 0xFFFF) return;
+      // Draw the highlight and clear the opposite side.
+          // Clearing stops at the current phase; highlighting covers the stage.
+          for (uint16_t i = stage_start;
+               i < stage_end && i + 1 < width; ++i) {
+            const int x1 = preview_x(i);
+            const int x2 = preview_x(i + 1);
+            const int y1 = BottomAlign(constrain(
+                int(values[i] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+            const int y2 = BottomAlign(constrain(
+                int(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)) + 1;
 
-      const uint16_t next_point = segment_starts[start_index + 1];
-      const uint16_t end_point =
-          next_point == 0xFFFF ? width - 1 : next_point;
-      const int x1 = preview_x(segment_starts[start_index]);
-      const int x2 = preview_x(end_point);
+            if (x1 == x2 && y1 == y2) {
+              // Find the nearest nonzero segment within this stage.
+              const uint16_t last_segment =
+                  std::min<uint16_t>(stage_end - 1, width - 2);
+              int direction_x = 0;
+              int direction_y = 0;
+              bool found = false;
 
-      if (CursorBlink()) {
-        const int y = BottomAlign(DISPLAY_HEIGHT + 2);
-        draw_line(x1, y, x2, y, false);
-        draw_line(x1, y, x1, y + 1, false);
-        draw_line(x2, y, x2, y + 1, false);
+              for (uint16_t distance = 1;
+                   distance <= std::max(i - stage_start,
+                                        last_segment - i);
+                   ++distance) {
+                if (i >= stage_start + distance) {
+                  const uint16_t previous = i - distance;
+                  const int px = preview_x(previous);
+                  const int py = BottomAlign(constrain(
+                      int(values[previous] >> 10),
+                      0, DISPLAY_HEIGHT)) + 1;
+                  const int qx = preview_x(previous + 1);
+                  const int qy = BottomAlign(constrain(
+                      int(values[previous + 1] >> 10),
+                      0, DISPLAY_HEIGHT)) + 1;
+
+                  if (px != qx || py != qy) {
+                    direction_x = qx - px;
+                    direction_y = qy - py;
+                    found = true;
+                  }
+                }
+
+                if (!found && i + distance <= last_segment) {
+                  const uint16_t next = i + distance;
+                  const int px = preview_x(next);
+                  const int py = BottomAlign(constrain(
+                      int(values[next] >> 10),
+                      0, DISPLAY_HEIGHT)) + 1;
+                  const int qx = preview_x(next + 1);
+                  const int qy = BottomAlign(constrain(
+                      int(values[next + 1] >> 10),
+                      0, DISPLAY_HEIGHT)) + 1;
+
+                  if (px != qx || py != qy) {
+                    direction_x = qx - px;
+                    direction_y = qy - py;
+                    found = true;
+                  }
+                }
+
+                if (found) break;
+              }
+
+              if (found) {
+                const int dx_sq = direction_x * direction_x;
+                const int dy_sq = direction_y * direction_y;
+                const int offset_x = (dy_sq > dx_sq)
+                    ? (direction_y > 0 ? 1 : -1) : 0;
+                const int offset_y = (dy_sq > dx_sq)
+                    ? 0 : (direction_x > 0 ? -1 : 1);
+                draw_pixel(x1 + offset_x, y1 + offset_y);
+              } else {
+                // No direction exists within this stage.
+                draw_pixel(x1, y1 - 1);
+              }
+            } else {
+              offset_segment(x1, y1, x2, y2, -1);
+            }
+
+
+          }
+        }
       }
 }
+
 const char* FLASHMEM Piquet::cursor_display_label() const {
       switch (cursor) {
         case CURSOR_ATTACK_SHAPE: return "AttShape";
