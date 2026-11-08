@@ -671,7 +671,7 @@ private:
         // Let Peaks apply Length multipliers when it configures each segment.
         env.set_attack_time_multiplier(c.length_index);
         env.set_decay_time_multiplier(c.length_index);
-        env.set_release_time_multiplier(c.length_index + 1);
+        env.set_release_time_multiplier(c.length_index);
 
         switch (c.type) {
           case ENV_AD:
