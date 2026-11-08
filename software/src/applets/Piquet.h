@@ -28,16 +28,18 @@ public:
     static constexpr int NUM_STAGES = 4;
     static constexpr int STAGE_MAX_VALUE = 255;
     static constexpr int DISPLAY_HEIGHT = 32;
+    static constexpr int PARAM_X = 9;
+    static constexpr int PARAM_Y = 20;
     static constexpr uint8_t MAX_TRIGGER_QUEUE = 4;
 
 
     enum EnvType : uint8_t {
       ENV_AD,
-      ENV_AHR,
+      ENV_ADR,
       ENV_AR,
       ENV_ADSR,
       ENV_LOOP_AD,
-      ENV_LOOP_AHR,
+      ENV_LOOP_ADR,
       ENV_TYPE_COUNT
     };
 
@@ -116,7 +118,6 @@ public:
 
       void Reset() {
         count = 0;
-        for (uint8_t i = 0; i < MAX_TRIGGER_QUEUE; ++i) ticks[i] = 0;
       }
 
       void Add(int32_t delay_ticks, bool queue_mode) {
@@ -172,13 +173,14 @@ public:
       uint8_t peaks_cached_attack;
       uint8_t peaks_cached_decay;
       uint8_t peaks_cached_release;
+      uint8_t peaks_cached_sustain;
       uint16_t peaks_cached_attack_time;
       uint16_t peaks_cached_decay_time;
       uint16_t peaks_cached_release_time;
       bool peaks_times_cached;
 
       bool gate_prev;
-      simfloat output;
+      int output;
       TriggerQueue trigger_queue;
 
       void Init(uint8_t ch) {
@@ -187,7 +189,7 @@ public:
         stage_value[STAGE_DECAY] = 52;
         stage_value[STAGE_SUSTAIN] = 160;
         stage_value[STAGE_RELEASE] = 44 + ch * 8;
-        delay_index = 0;
+        delay_index = 1;
         delay_mode = DELAY_OFF;
         cv_map = CVMAP_NONE;
         level = 255;
@@ -206,6 +208,7 @@ public:
         peaks_configured_type = 0xFF;
         peaks_config_signature = 0xFFFFFFFFu;
         peaks_times_cached = false;
+        peaks_cached_sustain = stage_value[STAGE_SUSTAIN];
 
         gate_prev = false;
         output = 0;
@@ -237,20 +240,21 @@ public:
         stage_value[STAGE_DECAY] = constrain(Unpack(data, PackLocation {11,8}), 1, STAGE_MAX_VALUE);
         stage_value[STAGE_SUSTAIN] = constrain(Unpack(data, PackLocation {19,8}), 0, STAGE_MAX_VALUE);
         stage_value[STAGE_RELEASE] = constrain(Unpack(data, PackLocation {27,8}), 1, STAGE_MAX_VALUE);
-        delay_index = constrain(Unpack(data, PackLocation {35,7}), 0, 126);
+        delay_index = constrain(Unpack(data, PackLocation {35,7}), 1, 127);
         delay_mode = constrain(Unpack(data, PackLocation {43,2}), 0, DELAY_MODE_COUNT - 1);
         cv_map = constrain(Unpack(data, PackLocation {45,3}), 0, CVMAP_COUNT - 1);
         level = constrain(Unpack(data, PackLocation {48,8}), 0, 255);
         inverted = Unpack(data, PackLocation {56,1});
         loop_mode = Unpack(data, PackLocation {57,1});
-        loop_enabled = false;
+        loop_enabled = loop_mode == LOOP_CONT &&
+            Unpack(data, PackLocation {58,1}) != 0;
         length_index = constrain(Unpack(data, PackLocation {59,2}), 0, 3);
         eoc_enabled = Unpack(data, PackLocation {61,1});
         // 2 empty bits
       }
 
       bool is_looping() const {
-        return type == ENV_LOOP_AD || type == ENV_LOOP_AHR;
+        return type == ENV_LOOP_AD || type == ENV_LOOP_ADR;
       }
 
       bool should_repeat() const {
@@ -297,16 +301,18 @@ public:
         cursor == CURSOR_RELEASE_SHAPE;
 
       selected_channel = 1 - selected_channel;
+      const EnvType new_type = static_cast<EnvType>(channels[selected_channel].type);
 
       if (cursor == CURSOR_LOOP_MODE &&
-          !cursor_visible_for_type(cursor, static_cast<EnvType>(channels[selected_channel].type))) {
+          !cursor_visible_for_type(cursor, new_type)) {
         cursor = CURSOR_ATTACK;
         parameter_navigation = false;
       }
 
-      if (stage_index >= 0) {
-        cursor = cursor_for_stage_index(
-          stage_index, static_cast<EnvType>(channels[selected_channel].type), shape_cursor);
+      // Preserve the same parameter when available.
+      // Otherwise fall back to the corresponding stage position.
+      if (stage_index >= 0 && cursor_stage_index(cursor, new_type) < 0) {
+        cursor = cursor_for_stage_index(stage_index, new_type, shape_cursor);
       }
     }
 
@@ -332,93 +338,125 @@ private:
     bool parameter_navigation = false;
     Channel channels[NUM_CHANNELS];
 
-    bool cursor_visible_for_type(int item, EnvType type) const {
-      switch (item) {
-        case CURSOR_LOOP_MODE:
-          return type == ENV_LOOP_AD || type == ENV_LOOP_AHR;
-        case CURSOR_DECAY:
-        case CURSOR_DECAY_SHAPE:
-          if (item == CURSOR_DECAY_SHAPE &&
-              (type == ENV_AHR || type == ENV_LOOP_AHR)) {
-            return false;
-          }
-          return type == ENV_AD || type == ENV_AHR ||
-                 type == ENV_ADSR || type == ENV_LOOP_AD ||
-                 type == ENV_LOOP_AHR;
-        case CURSOR_SUSTAIN:
-          return type == ENV_ADSR;
-        case CURSOR_RELEASE:
-        case CURSOR_RELEASE_SHAPE:
-          return type == ENV_AHR || type == ENV_AR || type == ENV_ADSR ||
-                 type == ENV_LOOP_AHR;
-        default:
-          return true;
-      }
-    }
+    struct StageInfo {
+      uint8_t cursor;
+      uint8_t shape_cursor;
+      uint8_t segment_start;
+      bool has_shape;
+    };
 
-    int stage_count(EnvType type) const {
+    static const StageInfo* stage_map(EnvType type) {
+      static const StageInfo map[3][STAGE_RELEASE + 1] = {
+        { // AD / L-AD
+          {CURSOR_ATTACK, CURSOR_ATTACK_SHAPE, 0, true},
+          {CURSOR_DECAY, CURSOR_DECAY_SHAPE, 1, true},
+          {CURSOR_COUNT, CURSOR_COUNT, 0, false},
+          {CURSOR_COUNT, CURSOR_COUNT, 0, false}
+        },
+        { // ADR / ADSR / L-ADR
+          {CURSOR_ATTACK, CURSOR_ATTACK_SHAPE, 0, true},
+          {CURSOR_DECAY, CURSOR_DECAY_SHAPE, 1, true},
+          {CURSOR_SUSTAIN, CURSOR_COUNT, 2, false},
+          {CURSOR_RELEASE, CURSOR_RELEASE_SHAPE, 3, true}
+        },
+        { // AR
+          {CURSOR_ATTACK, CURSOR_ATTACK_SHAPE, 0, true},
+          {CURSOR_RELEASE, CURSOR_RELEASE_SHAPE, 2, true},
+          {CURSOR_COUNT, CURSOR_COUNT, 0, false},
+          {CURSOR_COUNT, CURSOR_COUNT, 0, false}
+        }
+      };
+
       switch (type) {
         case ENV_AD:
         case ENV_LOOP_AD:
-          return 2;
-        case ENV_AHR:
-        case ENV_LOOP_AHR:
-          return 3;
+          return map[0];
         case ENV_AR:
-          return 2;
-        case ENV_ADSR:
-          return 4;
+          return map[2];
         default:
-          return 2;
+          return map[1];
       }
     }
 
-    int cursor_stage_index(int item, EnvType type) const {
-      switch (item) {
-        case CURSOR_ATTACK:
-        case CURSOR_ATTACK_SHAPE:
-          return 0;
-        case CURSOR_DECAY:
-        case CURSOR_DECAY_SHAPE:
-          return (type == ENV_AD || type == ENV_AHR ||
-                  type == ENV_ADSR || type == ENV_LOOP_AD ||
-                  type == ENV_LOOP_AHR)
-            ? 1 : -1;
-        case CURSOR_SUSTAIN:
-          if (type == ENV_ADSR) return 2;
-          return -1;
-        case CURSOR_RELEASE:
-        case CURSOR_RELEASE_SHAPE:
-          if (type == ENV_AHR || type == ENV_LOOP_AHR) return 2;
-          if (type == ENV_AR) return 1;
-          if (type == ENV_ADSR) return 3;
-          return -1;
-        default:
-          return -1;
+    bool cursor_visible_for_type(int item, EnvType type) const {
+      if (item == CURSOR_LOOP_MODE)
+        return type == ENV_LOOP_AD || type == ENV_LOOP_ADR;
+
+      const StageInfo* stages = stage_map(type);
+      for (int i = 0; i <= STAGE_RELEASE; ++i) {
+        if (stages[i].cursor == CURSOR_COUNT) break;
+        if (item == stages[i].cursor) return true;
+        if (stages[i].shape_cursor != CURSOR_COUNT &&
+            item == stages[i].shape_cursor)
+          return stages[i].has_shape;
       }
+
+      // Unmatched stages and shapes are unavailable.
+      return !((item >= CURSOR_ATTACK && item <= CURSOR_RELEASE) ||
+               (item >= CURSOR_ATTACK_SHAPE && item <= CURSOR_RELEASE_SHAPE));
+    }
+
+    int stage_count(EnvType type) const {
+      const StageInfo* stages = stage_map(type);
+      int count = 0;
+      while (count <= STAGE_RELEASE &&
+             stages[count].cursor != CURSOR_COUNT)
+        ++count;
+      return count;
+    }
+
+    static int stage_value_index(int item) {
+      switch (item) {
+        case CURSOR_ATTACK:  return STAGE_ATTACK;
+        case CURSOR_DECAY:   return STAGE_DECAY;
+        case CURSOR_SUSTAIN: return STAGE_SUSTAIN;
+        case CURSOR_RELEASE: return STAGE_RELEASE;
+        default:             return -1;
+      }
+    }
+
+    int stage_display_value(const Channel &c, int stage) const {
+      int value = c.stage_value[stage];
+
+      if (stage == STAGE_SUSTAIN) {
+        if (c.peaks_times_cached)
+          value = c.peaks_cached_sustain;
+        return Proportion(value, STAGE_MAX_VALUE, 100);
+      }
+
+      // Display the effective CV-modulated stage duration.
+      if (c.peaks_times_cached) {
+        if (stage == STAGE_ATTACK)
+          value = c.peaks_cached_attack;
+        else if (stage == STAGE_DECAY)
+          value = c.peaks_cached_decay;
+        else if (stage == STAGE_RELEASE)
+          value = c.peaks_cached_release;
+      }
+
+      const int multiplier =
+          (stage == STAGE_RELEASE ? 2 : 1) << c.length_index;
+
+      return StageMilliseconds(value, multiplier);
+    }
+
+    int cursor_stage_index(int item, EnvType type) const {
+      const StageInfo* stages = stage_map(type);
+      for (int i = 0; i <= STAGE_RELEASE; ++i) {
+        if (stages[i].cursor == CURSOR_COUNT) break;
+        if (item == stages[i].cursor ||
+            (stages[i].shape_cursor != CURSOR_COUNT &&
+             item == stages[i].shape_cursor))
+          return i;
+      }
+      return -1;
     }
 
     int cursor_for_stage_index(int index, EnvType type, bool shape) const {
       index = constrain(index, 0, stage_count(type) - 1);
-
-      if (index == 0) return shape ? CURSOR_ATTACK_SHAPE : CURSOR_ATTACK;
-
-      if (type == ENV_AD || type == ENV_LOOP_AD) {
-        return shape ? CURSOR_DECAY_SHAPE : CURSOR_DECAY;
-      }
-
-      if (type == ENV_AHR || type == ENV_LOOP_AHR) {
-        if (index == 1) return CURSOR_DECAY;
-        return shape ? CURSOR_RELEASE_SHAPE : CURSOR_RELEASE;
-      }
-
-      if (type == ENV_AR) {
-        return shape ? CURSOR_RELEASE_SHAPE : CURSOR_RELEASE;
-      }
-
-      if (index == 1) return shape ? CURSOR_DECAY_SHAPE : CURSOR_DECAY;
-      if (index == 2) return CURSOR_SUSTAIN;
-      return shape ? CURSOR_RELEASE_SHAPE : CURSOR_RELEASE;
+      const StageInfo& stage = stage_map(type)[index];
+      return shape && stage.has_shape
+          ? stage.shape_cursor : stage.cursor;
     }
 
     int next_visible_cursor(int current, int direction, EnvType type) {
@@ -426,112 +464,126 @@ private:
         parameter_navigation = false;
         return direction > 0 ? CURSOR_TYPE : CURSOR_CHANNEL;
       }
-
       if (current == CURSOR_TYPE) {
         parameter_navigation = false;
         if (direction < 0) return CURSOR_CHANNEL;
-        if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
+        if (type == ENV_LOOP_AD || type == ENV_LOOP_ADR)
           return CURSOR_LOOP_MODE;
         return CURSOR_LENGTH;
       }
-
       if (current == CURSOR_LENGTH) {
         parameter_navigation = false;
         if (direction < 0) {
-          if (type == ENV_LOOP_AD || type == ENV_LOOP_AHR)
+          if (type == ENV_LOOP_AD || type == ENV_LOOP_ADR)
             return CURSOR_LOOP_MODE;
           return CURSOR_TYPE;
         }
         return cursor_for_stage_index(0, type, false);
       }
-
       if (current == CURSOR_LOOP_MODE) {
         parameter_navigation = false;
         return direction < 0 ? CURSOR_TYPE : CURSOR_LENGTH;
       }
-
       if (current == CURSOR_ENVELOPE) {
         parameter_navigation = false;
         return direction < 0 ? CURSOR_CHANNEL : CURSOR_TYPE;
       }
 
       if (parameter_navigation) {
-        if (current == CURSOR_ATTACK_SHAPE && direction < 0) {
+        if (current == CURSOR_DELAY_MODE && direction < 0) {
           parameter_navigation = false;
-          return cursor_for_stage_index(stage_count(type) - 1, type, false);
+          return cursor_for_stage_index(stage_count(type) - 1, type, true);
         }
 
         int next = current;
         while (true) {
           next += direction;
-
-          // Stop at either end; never wrap around.
-          if (next < CURSOR_ATTACK_SHAPE || next >= CURSOR_COUNT) {
+          if (next < CURSOR_DELAY_MODE || next >= CURSOR_COUNT)
             return current;
-          }
-
-          // Skip the main sequence's stage values.
-          if (next == CURSOR_ENVELOPE ||
-              next == CURSOR_ATTACK ||
-              next == CURSOR_DECAY ||
-              next == CURSOR_SUSTAIN ||
-              next == CURSOR_RELEASE) {
-            continue;
-          }
-
-          if (cursor_visible_for_type(next, type)) return next;
+          if (cursor_visible_for_type(next, type))
+            return next;
         }
       }
 
       const int stage = cursor_stage_index(current, type);
-      if (stage >= 0 &&
-          current != CURSOR_ATTACK_SHAPE &&
-          current != CURSOR_DECAY_SHAPE &&
-          current != CURSOR_RELEASE_SHAPE) {
-        if (direction > 0) {
-          if (stage + 1 >= stage_count(type)) {
-            parameter_navigation = true;
-            return CURSOR_ATTACK_SHAPE;
-          }
-          return cursor_for_stage_index(stage + 1, type, false);
-        }
-
-        if (stage == 0) {
-          parameter_navigation = false;
-          return CURSOR_LENGTH;
-        }
-        return cursor_for_stage_index(stage - 1, type, false);
+      if (stage < 0) {
+        parameter_navigation = true;
+        return current;
       }
 
-      parameter_navigation = true;
-      return current;
-    }
+      const bool is_shape =
+          current == CURSOR_ATTACK_SHAPE ||
+          current == CURSOR_DECAY_SHAPE ||
+          current == CURSOR_RELEASE_SHAPE;
 
+      if (direction > 0) {
+        if (!is_shape) {
+          const int shape_cursor = cursor_for_stage_index(stage, type, true);
+          if (shape_cursor != current &&
+              cursor_visible_for_type(shape_cursor, type))
+            return shape_cursor;
+        }
+
+        if (stage + 1 < stage_count(type))
+          return cursor_for_stage_index(stage + 1, type, false);
+
+        parameter_navigation = true;
+        return CURSOR_DELAY_MODE;
+      }
+
+      if (is_shape)
+        return cursor_for_stage_index(stage, type, false);
+
+      if (stage == 0) {
+        parameter_navigation = false;
+        return CURSOR_LENGTH;
+      }
+
+      const int previous_shape =
+          cursor_for_stage_index(stage - 1, type, true);
+      if (previous_shape != cursor_for_stage_index(stage - 1, type, false) &&
+          cursor_visible_for_type(previous_shape, type))
+        return previous_shape;
+
+      return cursor_for_stage_index(stage - 1, type, false);
+    }
     static int StageTicks(uint8_t value) {
       return HS::kShapeExponential[value] >> 1;
+    }
+
+    static int StageMilliseconds(uint8_t value, int multiplier) {
+      return (StageTicks(value) * multiplier) / 17;
     }
 
     static constexpr uint16_t PeaksTime(int ticks) {
       if (ticks < 1) ticks = 1;
 
-      const uint64_t target =
-          (static_cast<uint64_t>(1) << 32) / static_cast<uint32_t>(ticks);
+      const uint32_t target =
+          UINT32_MAX / static_cast<uint32_t>(ticks);
 
-      uint64_t best_difference = UINT64_MAX;
-      uint16_t best_index = 0;
+      // Search the descending Peaks timing LUT.
+      if (target >= peaks::lut_env_increments[0]) return 0;
+      if (target <= peaks::lut_env_increments[255])
+        return static_cast<uint16_t>(255 << 8);
 
-      for (uint16_t i = 0; i < 256; ++i) {
-        const uint32_t increment = peaks::lut_env_increments[i];
-        const uint64_t difference = increment > target
-            ? increment - target
-            : target - increment;
-
-        if (difference < best_difference) {
-          best_difference = difference;
-          best_index = i;
-        }
+      uint16_t low = 0;
+      uint16_t high = 255;
+      while (high - low > 1) {
+        const uint16_t mid = (low + high) / 2;
+        if (peaks::lut_env_increments[mid] > target)
+          low = mid;
+        else
+          high = mid;
       }
 
+      const uint32_t upper_difference =
+          peaks::lut_env_increments[low] - target;
+      const uint32_t lower_difference =
+          target - peaks::lut_env_increments[high];
+
+      // On a tie, keep the earlier entry, as before.
+      const uint16_t best_index =
+          upper_difference <= lower_difference ? low : high;
       return static_cast<uint16_t>(best_index << 8);
     }
 
@@ -565,33 +617,32 @@ private:
         case CVMAP_RELEASE:
           Modulate(release, ch, 1, STAGE_MAX_VALUE);
           break;
-        // case NONE:
         default: break;
       }
 
       // Convert Piquet's stage durations to Peaks' time LUT indices.
       // Cache the result until a parameter or its CV-modulated value changes.
-      if (!c.peaks_times_cached ||
-          c.peaks_cached_attack != attack ||
-          c.peaks_cached_decay != decay ||
-          c.peaks_cached_release != release) {
+      if (!c.peaks_times_cached || c.peaks_cached_attack != attack) {
         c.peaks_cached_attack = attack;
-        c.peaks_cached_decay = decay;
-        c.peaks_cached_release = release;
-
-        c.peaks_cached_attack_time =
-            PeaksTime(StageTicks(attack));
-        c.peaks_cached_decay_time =
-            PeaksTime(StageTicks(decay));
-        c.peaks_cached_release_time =
-            PeaksTime(StageTicks(release));
-
-        c.peaks_times_cached = true;
+        c.peaks_cached_attack_time = PeaksTime(StageTicks(attack));
       }
+
+      if (!c.peaks_times_cached || c.peaks_cached_decay != decay) {
+        c.peaks_cached_decay = decay;
+        c.peaks_cached_decay_time = PeaksTime(StageTicks(decay));
+      }
+
+      if (!c.peaks_times_cached || c.peaks_cached_release != release) {
+        c.peaks_cached_release = release;
+        c.peaks_cached_release_time = PeaksTime(StageTicks(release));
+      }
+
+      c.peaks_times_cached = true;
 
       const uint16_t attack_time = c.peaks_cached_attack_time;
       const uint16_t decay_time = c.peaks_cached_decay_time;
       const uint16_t release_time = c.peaks_cached_release_time;
+      c.peaks_cached_sustain = static_cast<uint8_t>(sustain);
       const uint16_t sustain_level =
           Proportion(sustain, STAGE_MAX_VALUE, 32767);
 
@@ -603,12 +654,7 @@ private:
           (static_cast<uint32_t>(c.length_index) << 17);
 
       if (c.peaks_configured_type != c.type) {
-        c.peaks_trigger_pending = false;
         env.Init();
-        env.set_attack_reset_behaviour(peaks::RESET_BEHAVIOUR_NULL);
-        env.set_decay_release_reset_behaviour(peaks::RESET_BEHAVIOUR_SEGMENT_PHASE);
-        env.set_attack_falling_gate_behaviour(
-            peaks::FALLING_GATE_BEHAVIOUR_IGNORE);
         c.peaks_configured_type = c.type;
         c.peaks_config_signature = 0xFFFFFFFFu;
         c.output = 0;
@@ -627,19 +673,16 @@ private:
         env.set_decay_time_multiplier(c.length_index);
         env.set_release_time_multiplier(c.length_index + 1);
 
-        // seems redundant?
-        //env.set_adsar(attack_time, decay_time, sustain_level, release_time);
-
         switch (c.type) {
           case ENV_AD:
           case ENV_LOOP_AD:
             env.set_ad(attack_time, decay_time, 0,
                 c.type == ENV_LOOP_AD ? 2 : 0);
             break;
-          case ENV_AHR:
-          case ENV_LOOP_AHR:
-            env.set_adr(attack_time, decay_time, 32767, release_time,
-                0, c.type == ENV_LOOP_AHR ? 3 : 0);
+          case ENV_ADR:
+          case ENV_LOOP_ADR:
+            env.set_adr(attack_time, decay_time, sustain_level, release_time,
+                0, c.type == ENV_LOOP_ADR ? 3 : 0);
             break;
           case ENV_AR:
             env.set_ar(attack_time, release_time);
@@ -656,25 +699,27 @@ private:
 
       // Update live timing and levels without rebuilding the segment layout.
       env.set_time(0, attack_time);
+
       switch (c.type) {
-        default:
-          env.set_level(2, sustain_level);
-          // and fall thru
-        case ENV_AHR:
-        case ENV_LOOP_AHR:
-          env.set_time(2, release_time);
-          // and fall thru
+        case ENV_AR:
+          env.set_time(1, release_time);
+          break;
+
         case ENV_AD:
         case ENV_LOOP_AD:
           env.set_time(1, decay_time);
           break;
 
-        case ENV_AR:
-          env.set_time(1, release_time);
+        case ENV_ADR:
+        case ENV_LOOP_ADR:
+        case ENV_ADSR:
+        default:
+          env.set_level(2, sustain_level);
+          env.set_time(2, release_time);
+          env.set_time(1, decay_time);
           break;
       }
 
-      env.set_amplitude(65535, false);
 
       // Stay inactive after a type change until a real trigger arrives.
       if (c.peaks_waiting_for_trigger && !c.peaks_trigger_pending) {
@@ -697,7 +742,7 @@ private:
 
       const uint16_t value = env.ProcessSingleSample(control);
       const int amplitude_cv = Proportion(value, 32767, HEMISPHERE_MAX_CV);
-      c.output = int2simfloat(constrain(amplitude_cv, 0, HEMISPHERE_MAX_CV));
+      c.output = constrain(amplitude_cv, 0, HEMISPHERE_MAX_CV);
 
 
     }
@@ -711,6 +756,7 @@ private:
     void DrawParamRow(int x_offset = 0);
     const char* cursor_display_label() const;
     static int numeric_text_width(int value);
+    static int text_width(const char* value, int max_width);
     int cursor_value_width(const Channel &c) const;
     void DrawEnvelope(int channel, int x_offset, bool absolute_coordinates);
     const char* cursor_label() const;
@@ -718,12 +764,24 @@ private:
 };
 
 void FLASHMEM Piquet::Controller() {
+      // Capture pending EOC triggers before processing either channel.
+      bool pending_eoc[NUM_CHANNELS];
+      ForEachChannel(ch) {
+        pending_eoc[ch] = channels[ch].eoc_trigger_pending;
+        channels[ch].eoc_trigger_pending = false;
+      }
+
       ForEachChannel(ch) {
         Channel &c = channels[ch];
 
+        const uint8_t previous_type = c.peaks_configured_type;
+        const bool type_changed = previous_type != c.type;
+        const bool previous_was_looping =
+            previous_type == ENV_LOOP_AD || previous_type == ENV_LOOP_ADR;
+
         // Discard stale triggers when the envelope type changes.
         // A clock arriving in this same cycle can still trigger normally.
-        if (c.peaks_configured_type != c.type) {
+        if (type_changed) {
           c.peaks_trigger_pending = false;
           c.trigger_queue.Reset();
           c.peaks_waiting_for_trigger = true;
@@ -731,8 +789,7 @@ void FLASHMEM Piquet::Controller() {
 
         const bool gate = Gate(ch);
         const bool clock_trigger = Clock(ch);
-        const bool eoc_trigger = c.eoc_trigger_pending;
-        c.eoc_trigger_pending = false;
+        const bool eoc_trigger = pending_eoc[ch];
         const bool trigger = clock_trigger || eoc_trigger;
         const bool gate_fall = !gate && c.gate_prev;
         c.gate_prev = gate;
@@ -741,28 +798,41 @@ void FLASHMEM Piquet::Controller() {
           c.loop_enabled = gate;
         }
 
+        // Resume active loops when changing between L-AD and L-ADR,
+        // or when configuring a recalled preset.
+        // GTD follows the live gate; CON follows its saved state.
+        if (type_changed && c.should_repeat() &&
+            (previous_was_looping || previous_type == 0xFF)) {
+          begin_attack(c);
+        }
+
+        int trigger_count = 0;
+
         if (trigger) {
           const int32_t delay_ms = c.delay_index < 100
               ? static_cast<int32_t>(c.delay_index) * 10
               : 1000 + static_cast<int32_t>(c.delay_index - 100) * 100;
           const int32_t dticks = (delay_ms * 1000L) / 60;
+
           if (c.delay_mode == DELAY_OFF || dticks <= 0) {
             c.trigger_queue.Reset();
-            if (c.is_looping() && c.loop_mode == LOOP_CONT) {
-              c.loop_enabled = !c.loop_enabled;
-              if (c.loop_enabled) begin_attack(c);
-            } else {
-              begin_attack(c);
-            }
+            ++trigger_count;
           } else {
             c.trigger_queue.Add(dticks, c.delay_mode == DELAY_QUEUE);
           }
         }
 
-        if (c.trigger_queue.TickReady()) {
+        if (c.delay_mode == DELAY_OFF) c.trigger_queue.Reset();
+        else if (c.trigger_queue.TickReady()) ++trigger_count;
+
+        while (trigger_count-- > 0) {
           if (c.is_looping() && c.loop_mode == LOOP_CONT) {
-            c.loop_enabled = !c.loop_enabled;
-            if (c.loop_enabled) begin_attack(c);
+            if (c.peaks_waiting_for_trigger && c.loop_enabled) {
+              begin_attack(c);
+            } else {
+              c.loop_enabled = !c.loop_enabled;
+              if (c.loop_enabled) begin_attack(c);
+            }
           } else {
             begin_attack(c);
           }
@@ -775,13 +845,12 @@ void FLASHMEM Piquet::Controller() {
         if (eoc_event && c.eoc_enabled)
           channels[1 - ch].eoc_trigger_pending = true;
 
-        int out = simfloat2int(c.output);
+        int out = c.output;
         int level = c.level;
         if (c.cv_map == CVMAP_LEVEL)
           Modulate(level, ch, 0, 255);
         out = Proportion(out, HEMISPHERE_MAX_CV, Proportion(level, 255, HEMISPHERE_MAX_CV));
         if (c.inverted) out = HEMISPHERE_MAX_CV - out;
-        //out = constrain(out, 0, HEMISPHERE_MAX_CV);
 
         Out(ch, out);
       }
@@ -797,7 +866,7 @@ void FLASHMEM Piquet::View() {
       DrawIndicators();
       DrawEnvelope(selected_channel, 0, false);
       if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE)
-        gfxFrame(0, 29, 64, 35);
+        gfxFrame(0, PARAM_Y + 9, 64, 35);
       DrawParamRow();
       SetAux(true);
 }
@@ -820,26 +889,26 @@ void FLASHMEM Piquet::DrawFullScreen() {
 
     // Output meter and channel label.
     gfxRect(meter_x, 14, w, 2);
-    gfxPrint(channel_x, 20, OutputLabel(ch));
+    gfxPrint(channel_x, PARAM_Y, OutputLabel(ch));
 
     if (ch == selected_channel &&
         cursor == CURSOR_CHANNEL && EditMode()) {
-      gfxFrame(channel_x, 19, 8, 11);
+      gfxFrame(channel_x, PARAM_Y - 1, 8, 11);
     } else {
-      gfxInvert(channel_x, 19, 7, 9);
+      gfxInvert(channel_x, PARAM_Y - 1, 7, 9);
     }
   }
 
   const int channel_x = selected_channel * 64 + x_offset;
 
   if (cursor == CURSOR_CHANNEL) {
-    gfxIcon(channel_x + 8, 20, LEFT_ICON);
+    gfxIcon(channel_x + PARAM_X, PARAM_Y, LEFT_ICON);
   } else if (cursor == CURSOR_LENGTH) {
-    gfxIcon(channel_x + 30, 20, RIGHT_ICON);
+    gfxIcon(channel_x + PARAM_X + 21, PARAM_Y, RIGHT_ICON);
   }
 
   if (cursor == CURSOR_TYPE || cursor == CURSOR_LOOP_MODE) {
-    gfxFrame(channel_x, 29, 64, 35);
+    gfxFrame(channel_x, PARAM_Y + 9, 64, 35);
   }
 
   DrawParamRow(channel_x);
@@ -866,34 +935,35 @@ void FLASHMEM Piquet::OnEncoderMove(int direction) {
           break;
         case CURSOR_TYPE:
           c.type = constrain(c.type + direction, 0, ENV_TYPE_COUNT - 1);
+          if (!c.is_looping()) c.loop_enabled = false;
           break;
         case CURSOR_LOOP_MODE:
           c.loop_mode = constrain(
             c.loop_mode + direction, 0, LOOP_MODE_COUNT - 1);
           break;
         case CURSOR_ATTACK:
-          c.stage_value[STAGE_ATTACK] = constrain(c.stage_value[STAGE_ATTACK] + direction, 1, STAGE_MAX_VALUE);
-          break;
-        case CURSOR_ATTACK_SHAPE:
-          c.attack_shape = constrain(c.attack_shape + direction, 0, SHAPE_COUNT - 1);
-          break;
         case CURSOR_DECAY:
-          c.stage_value[STAGE_DECAY] = constrain(c.stage_value[STAGE_DECAY] + direction, 1, STAGE_MAX_VALUE);
-          break;
-        case CURSOR_DECAY_SHAPE:
-          c.decay_shape = constrain(c.decay_shape + direction, 0, SHAPE_COUNT - 1);
-          break;
         case CURSOR_SUSTAIN:
-          c.stage_value[STAGE_SUSTAIN] = constrain(c.stage_value[STAGE_SUSTAIN] + direction, 0, STAGE_MAX_VALUE);
+        case CURSOR_RELEASE: {
+          const int stage = stage_value_index(cursor);
+          const int minimum = cursor == CURSOR_SUSTAIN ? 0 : 1;
+          c.stage_value[stage] = constrain(
+              c.stage_value[stage] + direction,
+              minimum, STAGE_MAX_VALUE);
           break;
-        case CURSOR_RELEASE:
-          c.stage_value[STAGE_RELEASE] = constrain(c.stage_value[STAGE_RELEASE] + direction, 1, STAGE_MAX_VALUE);
+        }
+        case CURSOR_ATTACK_SHAPE:
+        case CURSOR_DECAY_SHAPE:
+        case CURSOR_RELEASE_SHAPE: {
+          uint8_t &shape = cursor == CURSOR_ATTACK_SHAPE ? c.attack_shape
+                         : cursor == CURSOR_DECAY_SHAPE ? c.decay_shape
+                                                        : c.release_shape;
+
+          shape = constrain(shape + direction, 0, SHAPE_COUNT - 1);
           break;
-        case CURSOR_RELEASE_SHAPE:
-          c.release_shape = constrain(c.release_shape + direction, 0, SHAPE_COUNT - 1);
-          break;
+        }
         case CURSOR_DELAY:
-          c.delay_index = constrain(c.delay_index + direction, 0, 126);
+          c.delay_index = constrain(c.delay_index + direction, 1, 127);
           break;
         case CURSOR_DELAY_MODE:
           c.delay_mode = constrain(c.delay_mode + direction, 0, DELAY_MODE_COUNT - 1);
@@ -921,17 +991,17 @@ void FLASHMEM Piquet::DrawIndicators() {
         gfxRect(0, 13 + (ch * 3), w, 2);
       }
 
-      gfxPrint(0, 20, OutputLabel(selected_channel));
+      gfxPrint(0, PARAM_Y, OutputLabel(selected_channel));
 
       if (cursor == CURSOR_CHANNEL && EditMode()) {
-        gfxFrame(0, 19, 8, 11);
+        gfxFrame(0, PARAM_Y - 1, 8, 11);
       } else {
-        gfxInvert(0, 19, 7, 9);
+        gfxInvert(0, PARAM_Y - 1, 7, 9);
 
         if (cursor == CURSOR_CHANNEL) {
-          gfxIcon(8, 20, LEFT_ICON);
+          gfxIcon(PARAM_X, PARAM_Y, LEFT_ICON);
         } else if (cursor == CURSOR_LENGTH) {
-          gfxIcon(30, 20, RIGHT_ICON);
+          gfxIcon(PARAM_X + 21, PARAM_Y, RIGHT_ICON);
         }
       }
 }
@@ -939,27 +1009,28 @@ void FLASHMEM Piquet::DrawIndicators() {
 // Apply the offset to parameter text, icons, and the edit cursor.
 void FLASHMEM Piquet::DrawParamRow(int x_offset) {
       Channel &c = channels[selected_channel];
+      const int param_x = x_offset + PARAM_X;
 
       if (cursor == CURSOR_CHANNEL ||
           cursor == CURSOR_TYPE || cursor == CURSOR_LENGTH ||
           cursor == CURSOR_LOOP_MODE) {
         if (cursor == CURSOR_TYPE) {
           const char* value = type_name(c.type);
-          const int value_x = 9 + x_offset;
-          gfxPrint(value_x, 20, value);
-          if (EditMode()) gfxInvert(value_x, 19, strlen(value) * 6, 9);
+          const int value_x = param_x;
+          gfxPrint(value_x, PARAM_Y, value);
+          if (EditMode()) gfxInvert(value_x, PARAM_Y - 1, strlen(value) * 6, 9);
         } else if (cursor == CURSOR_LOOP_MODE) {
           const char* value = c.loop_mode == LOOP_GATE ? "GTD" : "CON";
-          gfxIcon(9 + x_offset, 20, LOOP_ICON);
-          gfxPrint(19 + x_offset, 20, value);
-          if (EditMode()) gfxInvert(19 + x_offset, 19, strlen(value) * 6, 9);
+          gfxIcon(param_x, PARAM_Y, LOOP_ICON);
+          gfxPrint(param_x + 10, PARAM_Y, value);
+          if (EditMode()) gfxInvert(param_x + 10, PARAM_Y - 1, strlen(value) * 6, 9);
         }
 
         static const char* length_names[] = {"x1", "x2", "x4", "x8"};
-        gfxIcon(41 + x_offset, 20, ENV_ICON);
-        gfxPrint(50 + x_offset, 20, length_names[constrain(c.length_index, 0, 3)]);
+        gfxIcon(param_x + 32, PARAM_Y, ENV_ICON);
+        gfxPrint(param_x + 41, PARAM_Y, length_names[constrain(c.length_index, 0, 3)]);
         if (cursor == CURSOR_LENGTH && EditMode())
-          gfxCursor(50 + x_offset, 29, 12, 9, cursor_label());
+          gfxCursor(param_x + 41, PARAM_Y + 9, 12, 9, cursor_label());
         return;
       }
 
@@ -971,19 +1042,18 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
 
         switch (cursor) {
           case CURSOR_ATTACK_SHAPE:
-            label = "AShp:";
+            label = "A:";
             value = shape_name(c.attack_shape);
             break;
           case CURSOR_DECAY_SHAPE:
-            label = "DShp:";
+            label = "D:";
             value = shape_name(c.decay_shape);
             break;
           case CURSOR_RELEASE_SHAPE:
-            label = "RShp:";
+            label = "R:";
             value = shape_name(c.release_shape);
             break;
           case CURSOR_DELAY:
-            label = "Dly:";
             break;
           case CURSOR_DELAY_MODE:
             label = "DlyM:";
@@ -1008,87 +1078,68 @@ void FLASHMEM Piquet::DrawParamRow(int x_offset) {
             break;
         }
 
-        if (cursor == CURSOR_EOC) {
-          gfxPrint(9 + x_offset, 20, label);
-          gfxIcon(28 + x_offset, 20, RIGHT_ICON);
-          gfxPrint(35 + x_offset, 20, ":");
-          value_x = 43 + x_offset;
+        if (cursor == CURSOR_DELAY) {
+          gfxIcon(param_x, PARAM_Y, CLOCK_ICON);
+          gfxPrint(param_x + 9, PARAM_Y, ":");
+          value_x = param_x + 15;
+        } else if (cursor == CURSOR_EOC) {
+          gfxPrint(param_x, PARAM_Y, label);
+          gfxIcon(param_x + 19, PARAM_Y, RIGHT_ICON);
+          gfxPrint(param_x + 26, PARAM_Y, ":");
+          value_x = param_x + 32;
         } else {
-          gfxPrint(9 + x_offset, 20, label);
-          value_x = x_offset + 9 + static_cast<int>(strlen(label)) * 6;
+          gfxPrint(param_x, PARAM_Y, label);
+          value_x = param_x + static_cast<int>(strlen(label)) * 6;
         }
 
         if (cursor == CURSOR_DELAY) {
           if (c.delay_index < 100) {
-            gfxPrint(value_x, 20, ".");
-            if (c.delay_index < 10) gfxPrint("0");
-            gfxPrint(c.delay_index);
+            gfxPrint(value_x, PARAM_Y, c.delay_index * 10);
+            gfxPrint("ms");
           } else {
             const uint8_t tenths = c.delay_index - 90;
-            gfxPrint(value_x, 20, tenths / 10);
+            gfxPrint(value_x, PARAM_Y, tenths / 10);
             gfxPrint(".");
             gfxPrint(tenths % 10);
+            gfxPrint("s");
           }
-          gfxPrint("s");
         } else if (cursor == CURSOR_LEVEL) {
-          gfxPrint(value_x, 20, Proportion(c.level, 255, 100));
+          int level = c.level;
+          if (c.cv_map == CVMAP_LEVEL)
+            Modulate(level, selected_channel, 0, 255);
+          gfxPrint(value_x, PARAM_Y, Proportion(level, 255, 100));
           gfxPrint("%");
         } else if (value) {
-          gfxPrint(value_x, 20, value);
+          gfxPrint(value_x, PARAM_Y, value);
         }
 
         if (cursor == CURSOR_ATTACK_SHAPE ||
             cursor == CURSOR_DECAY_SHAPE ||
             cursor == CURSOR_RELEASE_SHAPE) {
-          value_width = min(static_cast<int>(strlen(value)) * 6, 64 - (value_x - x_offset));
+          value_width = text_width(value, 64 - (value_x - x_offset));
         } else if (cursor == CURSOR_DELAY) {
-          value_width = 24;
+          value_width = cursor_value_width(c);
         } else {
           value_width = min(cursor_value_width(c), 64 - (value_x - x_offset));
         }
 
         if (EditMode()) {
-          gfxCursor(value_x, 29, value_width, 9, cursor_display_label());
+          gfxCursor(value_x, PARAM_Y + 9, value_width, 9, cursor_display_label());
         }
         return;
       }
 
-      switch (cursor) {
-        case CURSOR_ATTACK:
-          gfxPrint(9 + x_offset, 20, "A:");
-          gfxPrint(21 + x_offset, 20,
-                   (StageTicks(c.stage_value[STAGE_ATTACK]) *
-                    (1 << c.length_index)) / 17);
-          gfxPrint("ms");
-          break;
-        case CURSOR_DECAY:
-          gfxPrint(9 + x_offset, 21,
-                   (c.type == ENV_AHR || c.type == ENV_LOOP_AHR) ? "H:" : "D:");
-          gfxPrint(21 + x_offset, 20,
-                   (StageTicks(c.stage_value[STAGE_DECAY]) *
-                    (1 << c.length_index)) / 17);
-          gfxPrint("ms");
-          break;
-        case CURSOR_SUSTAIN:
-          gfxPrint(9 + x_offset, 20, "S:");
-          gfxPrint(21 + x_offset, 20,
-                   Proportion(c.stage_value[STAGE_SUSTAIN],
-                              STAGE_MAX_VALUE, 100));
-          gfxPrint("%");
-          break;
-        case CURSOR_RELEASE:
-          gfxPrint(9 + x_offset, 20, "R:");
-          gfxPrint(21 + x_offset, 20,
-                   (StageTicks(c.stage_value[STAGE_RELEASE]) *
-                    (2 << c.length_index)) / 17);
-          gfxPrint("ms");
-          break;
-        default:
-          break;
+      const int stage = stage_value_index(cursor);
+      if (stage >= 0) {
+        static const char* labels[] = {"A:", "D:", "S:", "R:"};
+
+        gfxPrint(param_x, PARAM_Y, labels[stage]);
+        gfxPrint(param_x + 12, PARAM_Y, stage_display_value(c, stage));
+        gfxPrint(stage == STAGE_SUSTAIN ? "%" : "ms");
       }
 
       if (cursor >= CURSOR_ATTACK && cursor != CURSOR_LOOP_MODE && EditMode()) {
-        gfxCursor(21 + x_offset, 29, cursor_value_width(c), 9, cursor_label());
+        gfxCursor(param_x + 12, PARAM_Y + 9, cursor_value_width(c), 9, cursor_label());
       }
 }
 
@@ -1113,6 +1164,16 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
         else gfxPixel(x, y);
       };
 
+      const auto clear_pixel = [&](int x, int y) {
+        if (x >= x_offset && x < x_offset + 64 &&
+            y >= 0 && y < 64) {
+          if (absolute_coordinates)
+            graphics.clearRect(x, y, 1, 1);
+          else
+            gfxClear(x, y, 1, 1);
+        }
+      };
+
       const auto preview_x = [&](uint16_t point) {
         return x_offset + (width > 1
             ? Proportion(point, width - 1, 63) : 0);
@@ -1123,7 +1184,8 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
       // for both the contour and its infill.
       const auto raster_line =
           [&](int x0, int y0, int x1, int y1, bool fill,
-              int *highest_y = nullptr) {
+              int *lower_y = nullptr, bool collect_only = false,
+              int *upper_y = nullptr) {
         int dx = abs(x1 - x0);
         int dy = abs(y1 - y0);
         const bool steep = dy > dx;
@@ -1148,23 +1210,24 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
           const int px = steep ? y : x;
           const int py = steep ? x : y;
 
-          if (highest_y &&
+          if ((lower_y || upper_y) &&
               px >= x_offset && px < x_offset + 64 &&
               py >= 0 && py < 64) {
             const int column = px - x_offset;
-            if (py > highest_y[column]) {
-              highest_y[column] = py;
-            }
+            if (lower_y && py > lower_y[column])
+              lower_y[column] = py;
+            if (upper_y && py < upper_y[column])
+              upper_y[column] = py;
           }
 
-          if (fill) {
+          if (!collect_only && fill) {
             const int first_y = std::min(py, baseline);
             const int last_y = std::max(py, baseline);
-
-            for (int fill_y = first_y; fill_y <= last_y; ++fill_y) {
-              draw_pixel(px, fill_y);
-            }
-          } else {
+            if (absolute_coordinates)
+              graphics.drawVLine(px, first_y, last_y - first_y + 1);
+            else
+              gfxRect(px, first_y, 1, last_y - first_y + 1);
+          } else if (!collect_only) {
             draw_pixel(px, py);
           }
 
@@ -1198,247 +1261,45 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
 
       // Highlight the selected stage by drawing its contour one pixel
       // alongside the normal contour.
-      if (channel == selected_channel &&
-            cursor != CURSOR_ATTACK_SHAPE &&
-            cursor != CURSOR_DECAY_SHAPE &&
-            cursor != CURSOR_RELEASE_SHAPE) {
+      if (channel == selected_channel) {
         const EnvType type = static_cast<EnvType>(c.type);
         const int stage = cursor_stage_index(cursor, type);
+        const int num_stages = stage_count(type);
 
         uint16_t stage_start = 0;
         uint16_t stage_end = 0;
-        bool valid_stage = true;
+        if (stage >= 0 && stage < num_stages) {
+          const StageInfo& info = stage_map(type)[stage];
+          stage_start = segment_starts[info.segment_start];
+          stage_end = stage == num_stages - 1
+              ? width : segment_starts[info.segment_start + 1];
+        }
+        // Highlight the Sustain junction at the start of Release.
+        if (cursor == CURSOR_SUSTAIN &&
+            (type == ENV_ADR || type == ENV_LOOP_ADR) &&
+            stage_start == stage_end && stage_start < width) {
+          const int node_x = preview_x(stage_start);
+          const int node_y = BottomAlign(constrain(
+              int(values[stage_start] >> 10), 0, DISPLAY_HEIGHT)) + 1;
 
-        switch (type) {
-          case ENV_AR:
-            if (stage == 0) {
-              stage_start = segment_starts[0];
-              stage_end = segment_starts[1];
-            } else if (stage == 1) {
-              stage_start = segment_starts[2];
-              stage_end = width;
-            } else {
-              valid_stage = false;
+          for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+              if (abs(dx) == 2 || abs(dy) == 2)
+                clear_pixel(node_x + dx, node_y + dy);
+              else
+                draw_pixel(node_x + dx, node_y + dy);
             }
-            break;
-
-          case ENV_AD:
-          case ENV_LOOP_AD:
-            if (stage == 0) {
-              stage_start = segment_starts[0];
-              stage_end = segment_starts[1];
-            } else if (stage == 1) {
-              stage_start = segment_starts[1];
-              stage_end = width;
-            } else {
-              valid_stage = false;
-            }
-            break;
-
-          case ENV_AHR:
-          case ENV_LOOP_AHR:
-            if (stage == 0) {
-              stage_start = segment_starts[0];
-              stage_end = segment_starts[1];
-            } else if (stage == 1) {
-              stage_start = segment_starts[1];
-              stage_end = segment_starts[2];
-            } else if (stage == 2) {
-              stage_start = segment_starts[3];
-              stage_end = width;
-            } else {
-              valid_stage = false;
-            }
-            break;
-
-          case ENV_ADSR:
-            if (stage == 0) {
-              stage_start = segment_starts[0];
-              stage_end = segment_starts[1];
-            } else if (stage == 1) {
-              stage_start = segment_starts[1];
-              stage_end = segment_starts[2];
-            } else if (stage == 2) {
-              stage_start = segment_starts[2];
-              stage_end = segment_starts[3];
-            } else if (stage == 3) {
-              stage_start = segment_starts[3];
-              stage_end = width;
-            } else {
-              valid_stage = false;
-            }
-            break;
-
-          default:
-            valid_stage = false;
-            break;
+          }
         }
 
-        if (valid_stage && stage_start < stage_end &&
+        if (stage_start < stage_end &&
             stage_end <= width) {
-          // Rasterize both offset paths using identical Bresenham stepping.
-          // The offset uses the dominant perpendicular axis.
+          // Collect both raster boundaries for the selected stage.
+          int stage_lower_y[64];
+          int stage_upper_y[64];
+          for (int &y : stage_lower_y) y = -1;
+          for (int &y : stage_upper_y) y = 64;
 
-
-          const auto offset_segment =
-              [&](int x0, int y0, int x1, int y1,
-                  int side) {
-            const int dx_signed = x1 - x0;
-            const int dy_signed = y1 - y0;
-            const int dx_sq = dx_signed * dx_signed;
-            const int dy_sq = dy_signed * dy_signed;
-
-            int offset_x = 0;
-            int offset_y = 0;
-
-            // Choose one dominant perpendicular axis for a one-pixel offset.
-            if (dy_sq > dx_sq) {
-              offset_x = (dy_signed > 0) ? -side :
-                         (dy_signed < 0) ? side : 0;
-            } else {
-              offset_y = (dx_signed > 0) ? side :
-                         (dx_signed < 0) ? -side : 0;
-            }
-            x0 += offset_x;
-            x1 += offset_x;
-            y0 += offset_y;
-            y1 += offset_y;
-
-            int dx = abs(x1 - x0);
-            int dy = abs(y1 - y0);
-            bool steep = dy > dx;
-
-            if (steep) {
-              std::swap(x0, y0);
-              std::swap(x1, y1);
-              std::swap(dx, dy);
-            }
-
-            if (x0 > x1) {
-              std::swap(x0, x1);
-              std::swap(y0, y1);
-            }
-
-            int err = dx >> 1;
-            const int ystep = (y1 > y0) ? 1 : -1;
-            int y = y0;
-
-            for (int x = x0; x <= x1; ++x) {
-              const int px = steep ? y : x;
-              const int py = steep ? x : y;
-
-              if (px >= x_offset && px < x_offset + 64 &&
-                  py >= 0 && py < 64) {
-                draw_pixel(px, py);
-              }
-
-              err -= dy;
-              if (err < 0) {
-                y += ystep;
-                err += dx;
-              }
-            }
-          };
-
-                // Collect the highest contour Y in each column of the selected stage.
-      int stage_highest_y[64];
-      for (int &y : stage_highest_y) y = -1;
-
-      for (uint16_t i = stage_start;
-           i < stage_end && i + 1 < width; ++i) {
-        const int x1 = preview_x(i);
-        const int x2 = preview_x(i + 1);
-        const int y1 = BottomAlign(constrain(
-            int(values[i] >> 10), 0, DISPLAY_HEIGHT)) + 1;
-        const int y2 = BottomAlign(constrain(
-            int(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)) + 1;
-
-        raster_line(x1, y1, x2, y2, false, stage_highest_y);
-      }
-
-      const auto clear_pixel = [&](int x, int y) {
-        if (x >= x_offset && x < x_offset + 64 &&
-            y >= 0 && y < 64) {
-          if (absolute_coordinates)
-            graphics.clearRect(x, y, 1, 1);
-          else
-            gfxClear(x, y, 1, 1);
-        }
-      };
-
-      const uint16_t final_point =
-          (stage_end < width) ? stage_end : width - 1;
-
-      // Start and finish one pixel below the actual stage endpoints.
-      const int stage_start_x = preview_x(stage_start);
-      const int start_sample_y = BottomAlign(constrain(
-          int(values[stage_start] >> 10), 0, DISPLAY_HEIGHT)) + 1;
-      const int start_x = stage_start_x - (stage_start > 0 ? 1 : 0);
-      const int start_column = constrain(
-          stage_start_x - x_offset, 0, 63);
-      const int start_y = stage_start > 0
-          ? start_sample_y
-          : (stage_highest_y[start_column] >= 0
-              ? stage_highest_y[start_column] + 1
-              : start_sample_y);
-
-      const int final_x = preview_x(final_point);
-      const int end_y = BottomAlign(constrain(
-          int(values[final_point] >> 10), 0, DISPLAY_HEIGHT)) + 1;
-      const int end_x =
-          final_x + ((stage_end < width) ? 1 : 0);
-
-      const int first_column =
-          constrain(start_x - x_offset, 0, 63);
-      const int last_column =
-          constrain(end_x - x_offset, 0, 63);
-
-      // Follow the lower contour boundary, one pixel below its rasterized Y.
-      int path_x = start_x;
-      int path_y = start_y;
-      bool at_stage_start = true;
-      clear_pixel(path_x, path_y);
-
-      if (first_column == last_column) {
-        // Both endpoints occupy the same display column.
-        while (path_y != end_y) {
-          path_y += (end_y > path_y) ? 1 : -1;
-          clear_pixel(path_x, path_y);
-        }
-      } else {
-        for (int column = first_column + 1;
-             column <= last_column; ++column) {
-          int target_y;
-
-          if (column == last_column) {
-            // Use the actual endpoint, including the intermediate-stage
-            // one-pixel extension when applicable.
-            target_y = end_y;
-          } else if (stage_highest_y[column] >= 0) {
-            target_y = stage_highest_y[column] + 1;
-          } else {
-            target_y = path_y;
-          }
-
-          // Connect vertically at the previous X until the next boundary
-          // pixel can touch by a side or corner.
-          while (abs(target_y - path_y) > 1) {
-            path_y += (target_y > path_y) ? 1 : -1;
-            const int connector_offset =
-                (stage_start == 0) ? 1 : (at_stage_start ? 0 : -1);
-            clear_pixel(path_x + connector_offset, path_y);
-          }
-
-          // Complete the connection at the next X.
-          path_x = x_offset + column;
-          path_y = target_y;
-          at_stage_start = false;
-          clear_pixel(path_x, path_y);
-        }
-      }
-
-      // Draw the highlight and clear the opposite side.
-          // Clearing stops at the current phase; highlighting covers the stage.
           for (uint16_t i = stage_start;
                i < stage_end && i + 1 < width; ++i) {
             const int x1 = preview_x(i);
@@ -1447,75 +1308,78 @@ void FLASHMEM Piquet::DrawEnvelope(int channel, int x_offset, bool absolute_coor
                 int(values[i] >> 10), 0, DISPLAY_HEIGHT)) + 1;
             const int y2 = BottomAlign(constrain(
                 int(values[i + 1] >> 10), 0, DISPLAY_HEIGHT)) + 1;
+            raster_line(x1, y1, x2, y2, false,
+                        stage_lower_y, true, stage_upper_y);
+          }
 
-            if (x1 == x2 && y1 == y2) {
-              // Find the nearest nonzero segment within this stage.
-              const uint16_t last_segment =
-                  std::min<uint16_t>(stage_end - 1, width - 2);
-              int direction_x = 0;
-              int direction_y = 0;
-              bool found = false;
+          const uint16_t final_point =
+              (stage_end < width) ? stage_end : width - 1;
+          const int first_column =
+              constrain(preview_x(stage_start) - x_offset, 0, 63);
+          const int last_column =
+              constrain(preview_x(final_point) - x_offset, 0, 63);
 
-              for (uint16_t distance = 1;
-                   distance <= std::max(i - stage_start,
-                                        last_segment - i);
-                   ++distance) {
-                if (i >= stage_start + distance) {
-                  const uint16_t previous = i - distance;
-                  const int px = preview_x(previous);
-                  const int py = BottomAlign(constrain(
-                      int(values[previous] >> 10),
-                      0, DISPLAY_HEIGHT)) + 1;
-                  const int qx = preview_x(previous + 1);
-                  const int qy = BottomAlign(constrain(
-                      int(values[previous + 1] >> 10),
-                      0, DISPLAY_HEIGHT)) + 1;
+          const auto trace_stage_boundary = [&](bool highlight) {
+            const int *boundary =
+                highlight ? stage_upper_y : stage_lower_y;
+            const int side = highlight ? -1 : 1;
 
-                  if (px != qx || py != qy) {
-                    direction_x = qx - px;
-                    direction_y = qy - py;
-                    found = true;
-                  }
+            const auto put_pixel = [&](int x, int y) {
+              if (highlight) draw_pixel(x, y);
+              else clear_pixel(x, y);
+            };
+
+            int previous_y = -1;
+            bool have_previous = false;
+
+            for (int column = first_column;
+                 column <= last_column; ++column) {
+              if (boundary[column] < 0 || boundary[column] >= 64)
+                continue;
+
+              const int x = x_offset + column;
+              const int target_y = boundary[column] + side;
+              const int connector_x =
+                  (highlight == (stage == 0)) ? x - 1 : x;
+
+              if (have_previous) {
+                // Connect vertically until corner contact is achieved.
+                while (abs(target_y - previous_y) > 1) {
+                  previous_y +=
+                      (target_y > previous_y) ? 1 : -1;
+                  put_pixel(connector_x, previous_y);
                 }
-
-                if (!found && i + distance <= last_segment) {
-                  const uint16_t next = i + distance;
-                  const int px = preview_x(next);
-                  const int py = BottomAlign(constrain(
-                      int(values[next] >> 10),
-                      0, DISPLAY_HEIGHT)) + 1;
-                  const int qx = preview_x(next + 1);
-                  const int qy = BottomAlign(constrain(
-                      int(values[next + 1] >> 10),
-                      0, DISPLAY_HEIGHT)) + 1;
-
-                  if (px != qx || py != qy) {
-                    direction_x = qx - px;
-                    direction_y = qy - py;
-                    found = true;
-                  }
-                }
-
-                if (found) break;
               }
 
-              if (found) {
-                const int dx_sq = direction_x * direction_x;
-                const int dy_sq = direction_y * direction_y;
-                const int offset_x = (dy_sq > dx_sq)
-                    ? (direction_y > 0 ? 1 : -1) : 0;
-                const int offset_y = (dy_sq > dx_sq)
-                    ? 0 : (direction_x > 0 ? -1 : 1);
-                draw_pixel(x1 + offset_x, y1 + offset_y);
-              } else {
-                // No direction exists within this stage.
-                draw_pixel(x1, y1 - 1);
-              }
-            } else {
-              offset_segment(x1, y1, x2, y2, -1);
+              put_pixel(x, target_y);
+              previous_y = target_y;
+              have_previous = true;
             }
+          };
 
+          trace_stage_boundary(false); // Clear-space: lower boundary.
+          trace_stage_boundary(true);  // Highlight: upper boundary.
 
+          // Complete clear-space at the selected stage edge.
+          const bool is_attack = stage == 0;
+          const uint16_t edge_point =
+              is_attack ? final_point : stage_start;
+          const int edge_x = preview_x(edge_point);
+          const int edge_column = edge_x - x_offset;
+
+          if (edge_column >= 0 && edge_column < 64 &&
+              stage_lower_y[edge_column] >= 0) {
+            const int edge_y = BottomAlign(constrain(
+                int(values[edge_point] >> 10),
+                0, DISPLAY_HEIGHT)) + 1;
+            const int clear_x = edge_x + (is_attack ? 1 : -1);
+            const int clear_start_y = stage_lower_y[edge_column] + 1;
+            const int step = edge_y >= clear_start_y ? 1 : -1;
+
+            for (int y = clear_start_y; ; y += step) {
+              clear_pixel(clear_x, y);
+              if (y == edge_y) break;
+            }
           }
         }
       }
@@ -1545,38 +1409,37 @@ int FLASHMEM Piquet::numeric_text_width(int value) {
       return width;
 }
 
+int FLASHMEM Piquet::text_width(const char* value, int max_width) {
+      return min(static_cast<int>(strlen(value)) * 6, max_width);
+}
+
 int FLASHMEM Piquet::cursor_value_width(const Channel &c) const {
       switch (cursor) {
         case CURSOR_LOOP_MODE:
           return 18;
         case CURSOR_ATTACK:
-          return numeric_text_width(
-              (StageTicks(c.stage_value[STAGE_ATTACK]) *
-               (1 << c.length_index)) / 17) + 12;
         case CURSOR_DECAY:
-          return numeric_text_width(
-              (StageTicks(c.stage_value[STAGE_DECAY]) *
-               (1 << c.length_index)) / 17) + 12;
         case CURSOR_SUSTAIN:
-          return numeric_text_width(Proportion(c.stage_value[STAGE_SUSTAIN], STAGE_MAX_VALUE, 100)) + 6;
-        case CURSOR_RELEASE:
-          return numeric_text_width(
-              (StageTicks(c.stage_value[STAGE_RELEASE]) *
-               (2 << c.length_index)) / 17) + 12;
+        case CURSOR_RELEASE: {
+          const int stage = stage_value_index(cursor);
+          const int unit_width = stage == STAGE_SUSTAIN ? 6 : 12;
+          return numeric_text_width(stage_display_value(c, stage)) + unit_width;
+        }
         case CURSOR_ATTACK_SHAPE:
-          return min(static_cast<int>(strlen(shape_name(c.attack_shape))) * 6, 30);
+          return text_width(shape_name(c.attack_shape), 36);
         case CURSOR_DECAY_SHAPE:
-          return min(static_cast<int>(strlen(shape_name(c.decay_shape))) * 6, 30);
+          return text_width(shape_name(c.decay_shape), 36);
         case CURSOR_RELEASE_SHAPE:
-          return min(static_cast<int>(strlen(shape_name(c.release_shape))) * 6, 30);
+          return text_width(shape_name(c.release_shape), 36);
         case CURSOR_DELAY:
-          return c.delay_index < 100 ? 30 : 24;
+          return c.delay_index < 100
+              ? numeric_text_width(c.delay_index * 10) + 12 : 24;
         case CURSOR_DELAY_MODE:
-          return min(static_cast<int>(strlen(dmode_name(c.delay_mode))) * 6, 52);
+          return text_width(dmode_name(c.delay_mode), 52);
         case CURSOR_EOC:
           return 18;
         case CURSOR_CV_MAP:
-          return min(static_cast<int>(strlen(cvmap_name(c.cv_map))) * 6, 52);
+          return text_width(cvmap_name(c.cv_map), 52);
         case CURSOR_LEVEL:
           return 24;
         case CURSOR_INVERT:
@@ -1593,15 +1456,11 @@ const char* FLASHMEM Piquet::cursor_label() const {
         "AttShape", "DcyShape", "RelShape",
         "Delay Mode", "Delay", "Send EOC", "CV Map", "Level", "Invert"
       };
-      if (channels[selected_channel].type == ENV_AHR ||
-          channels[selected_channel].type == ENV_LOOP_AHR) {
-        if (cursor == CURSOR_DECAY) return "Hold";
-      }
       return labels[constrain(cursor, 0, CURSOR_COUNT - 1)];
 }
 
 const char* FLASHMEM Piquet::type_name(uint8_t t) {
-      static const char* names[ENV_TYPE_COUNT] = { "AD", "AHR", "AR", "ADSR", "L-AD", "L-AHR" };
+      static const char* names[ENV_TYPE_COUNT] = { "AD", "ADR", "AR", "ADSR", "L-AD", "L-ADR" };
       return names[constrain(t, 0, ENV_TYPE_COUNT - 1)];
 }
 
@@ -1616,7 +1475,10 @@ const char* FLASHMEM Piquet::cvmap_name(uint8_t m) {
 }
 
 const char* FLASHMEM Piquet::shape_name(uint8_t s) {
-      static const char* names[SHAPE_COUNT] = { "Lin", "Exp", "Qua", "Sin", "Pla", "Cli", "Gat", "BD", "MD", "LD", "SF" };
+      static const char* names[SHAPE_COUNT] = {
+        "Linear", "Expo", "Quart", "Sine", "Plat", "Cliff",
+        "Gate", "BigDip", "MedDip", "LitDip", "SinFld"
+      };
       return names[constrain(s, 0, SHAPE_COUNT - 1)];
 }
 
@@ -1654,5 +1516,12 @@ void FLASHMEM Piquet::OnDataReceive(uint64_t data) {
       CONSTRAIN(channels[ch].decay_shape, 0, SHAPE_COUNT - 1);
       CONSTRAIN(channels[ch].release_shape, 0, SHAPE_COUNT - 1);
     }
+  }
+
+  // Keep the cursor valid for the restored envelope type.
+  const EnvType type = static_cast<EnvType>(channels[selected_channel].type);
+  if (!cursor_visible_for_type(cursor, type)) {
+    cursor = CURSOR_ATTACK;
+    parameter_navigation = false;
   }
 }
